@@ -1,3 +1,6 @@
+> [!CAUTION]
+> Do not use this to install mods, currently only updating works.
+
 > [!NOTE]
 > This project is **vibe coded** using [Claude](https://claude.ai) by Anthropic.
 > It may contain bugs or behave unexpectedly. Use at your own risk, and please report issues on GitHub.
