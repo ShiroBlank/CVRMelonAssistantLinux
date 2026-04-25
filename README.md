@@ -10,7 +10,7 @@ Ported and maintained by **[Kneesox](https://kneesox.moe)**.
 
 ![CVR MelonLoader Assistant screenshot](screenshot.png)
 
-![CVR MelonLoader Assistant screenshot 2](screenshot.png)
+![CVR MelonLoader Assistant screenshot 2](screenshot2.png)
 
 
 ## Features
