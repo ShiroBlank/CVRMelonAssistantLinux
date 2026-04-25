@@ -5,7 +5,6 @@ mod steam;
 mod config;
 mod ui;
 mod melon_dll;
-mod log_scanner;
 
 use gtk4::prelude::*;
 use gtk4::Application;

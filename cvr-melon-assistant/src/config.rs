@@ -20,9 +20,6 @@ pub struct Config {
     /// Show mods whose files are in Mods/Broken or Mods/Retired on disk (default: false)
     #[serde(default)]
     pub show_quarantined_mods: bool,
-    /// Whether the user has already seen the Debug tab intro dialog (default: false)
-    #[serde(default)]
-    pub debug_intro_shown: bool,
 }
 
 fn default_true() -> bool { true }
@@ -37,7 +34,6 @@ impl Default for Config {
             confirm_uninstall: true,
             show_broken_retired_category: true,
             show_quarantined_mods: false,
-            debug_intro_shown: false,
         }
     }
 }

@@ -99,71 +99,25 @@ pub fn build_ui(app: &Application) {
     let about_tab = build_about_tab();
     notebook.append_page(&about_tab, Some(&Label::new(Some("  About  "))));
 
-    let (debug_tab, debug_scan_btn) = build_debug_tab(&state);
-    notebook.append_page(&debug_tab, Some(&Label::new(Some("  Debug  "))));
-
     root.append(&notebook);
 
     // ── Auto-check MelonLoader status when the tab is first switched to ───────
-    // Page index 1 = MelonLoader tab: auto-check on first visit.
-    // Page index 4 = Debug tab: show intro dialog on first ever visit, then auto-scan.
+    // Page index 1 = MelonLoader tab. We only auto-check once (and skip if it
+    // already failed due to no install dir — the status label will show the
+    // warning and the user can set the dir and click Check Status manually).
     {
         use std::cell::Cell;
         use std::rc::Rc;
-        let ml_checked  = Rc::new(Cell::new(false));
-        let dbg_visited = Rc::new(Cell::new(false));
-        let ml_check_btn_ref   = ml_check_btn.clone();
-        let debug_scan_btn_ref = debug_scan_btn.clone();
+        let checked_once = Rc::new(Cell::new(false));
+        let ml_check_btn_ref = ml_check_btn.clone();
         let state_ref = state.clone();
         notebook.connect_switch_page(move |_nb, _page, page_num| {
-            let has_dir = state_ref.lock().unwrap().install_dir.is_some();
-
-            if page_num == 1 && !ml_checked.get() && has_dir {
-                ml_checked.set(true);
-                ml_check_btn_ref.emit_clicked();
-            }
-
-            if page_num == 4 && !dbg_visited.get() && has_dir {
-                dbg_visited.set(true);
-                let already_shown = Config::load().debug_intro_shown;
-                let scan_btn = debug_scan_btn_ref.clone();
-
-                if already_shown {
-                    // Already confirmed before — just auto-scan
-                    scan_btn.emit_clicked();
-                } else {
-                    // First visit — show the intro dialog, scan only if confirmed
-                    let dialog = AlertDialog::builder()
-                        .message("Log Scanner")
-                        .detail(
-                            "The Debug tab reads your MelonLoader log file \
-                             (MelonLoader/Latest.log inside your ChilloutVR folder) \
-                             and analyses it for common issues such as:\n\n\
-                             • Incompatible mods\n\
-                             • Assembly load failures\n\
-                             • Mods throwing runtime errors\n\
-                             • Misplaced or duplicate mods\n\
-                             • Missing dependencies\n\n\
-                             The log is read locally — nothing is sent anywhere.\n\
-                             The file is only generated after launching ChilloutVR \
-                             with MelonLoader at least once."
-                        )
-                        .buttons(["Cancel", "Scan Log"])
-                        .cancel_button(0)
-                        .default_button(1)
-                        .build();
-
-                    dialog.choose(None::<&gtk4::Window>, None::<&gio::Cancellable>,
-                        move |response| {
-                            if response == Ok(1) {
-                                // Mark as shown and proceed
-                                let mut cfg = Config::load();
-                                cfg.debug_intro_shown = true;
-                                let _ = cfg.save();
-                                scan_btn.emit_clicked();
-                            }
-                        }
-                    );
+            if page_num == 1 && !checked_once.get() {
+                // Only auto-check if an install dir is set
+                let has_dir = state_ref.lock().unwrap().install_dir.is_some();
+                if has_dir {
+                    checked_once.set(true);
+                    ml_check_btn_ref.emit_clicked();
                 }
             }
         });
@@ -1717,309 +1671,7 @@ fn show_info(title: &str, msg: &str) {
     d.show(None::<&gtk4::Window>);
 }
 
-// ── Debug Tab ─────────────────────────────────────────────────────────────────
-
-fn build_debug_tab(state: &SharedState) -> (Box, Button) {
-    let vbox = Box::new(Orientation::Vertical, 0);
-
-    // ── Toolbar ───────────────────────────────────────────────────────────────
-    let toolbar = Box::new(Orientation::Horizontal, 8);
-    toolbar.add_css_class("toolbar");
-
-    let scan_btn = Button::with_label("🔍  Scan Log");
-    scan_btn.add_css_class("action-button");
-    toolbar.append(&scan_btn);
-
-    let log_path_label = Label::new(Some("Log: —"));
-    log_path_label.set_halign(Align::Start);
-    log_path_label.set_hexpand(true);
-    log_path_label.set_ellipsize(pango::EllipsizeMode::Start);
-    log_path_label.add_css_class("dir-label");
-    toolbar.append(&log_path_label);
-
-    let open_log_btn = Button::with_label("📂  Open Log");
-    open_log_btn.add_css_class("small-button");
-    toolbar.append(&open_log_btn);
-
-    vbox.append(&toolbar);
-
-    // ── Scrolled findings area ────────────────────────────────────────────────
-    let scrolled = ScrolledWindow::new();
-    scrolled.set_vexpand(true);
-
-    let findings_box = Box::new(Orientation::Vertical, 4);
-    findings_box.set_margin_top(8);
-    findings_box.set_margin_bottom(8);
-    findings_box.set_margin_start(12);
-    findings_box.set_margin_end(12);
-    findings_box.set_widget_name("findings-box");
-
-    let placeholder = Label::new(Some(
-        "Click '🔍 Scan Log' to analyse your MelonLoader log file.\n\
-         The log is read from:  <ChilloutVR>/MelonLoader/Latest.log"
-    ));
-    placeholder.set_halign(Align::Center);
-    placeholder.set_valign(Align::Center);
-    placeholder.set_vexpand(true);
-    placeholder.add_css_class("info-text");
-    findings_box.append(&placeholder);
-    findings_box.set_widget_name("findings-box");
-
-    scrolled.set_child(Some(&findings_box));
-    vbox.append(&scrolled);
-
-    // ── Status bar ────────────────────────────────────────────────────────────
-    let status = Label::new(Some("No scan performed yet."));
-    status.set_halign(Align::Start);
-    status.set_margin_start(10);
-    status.set_margin_top(4);
-    status.set_margin_bottom(4);
-    status.add_css_class("status-label");
-    vbox.append(&status);
-
-    // ── Wire: Scan ────────────────────────────────────────────────────────────
-    {
-        let state  = state.clone();
-        let fb     = findings_box.clone();
-        let st     = status.clone();
-        let lpl    = log_path_label.clone();
-
-        scan_btn.connect_clicked(move |b| {
-            let install_dir = state.lock().unwrap().install_dir.clone();
-            let Some(dir) = install_dir else {
-                st.set_label("No install directory set — go to Options first.");
-                return;
-            };
-
-            b.set_sensitive(false);
-            b.set_label("Scanning…");
-            st.set_label("Reading log file…");
-
-            let log_path = crate::log_scanner::log_path(&dir);
-            lpl.set_text(&format!("Log: {}", log_path.display()));
-
-            // Run the scanner synchronously (filesystem only, no network)
-            let result = crate::log_scanner::scan(&dir);
-
-            // Clear old findings
-            while let Some(child) = fb.first_child() { fb.remove(&child); }
-
-            match result {
-                Err(e) => {
-                    // Determine if it's specifically a missing file vs another error
-                    let log_path_str = crate::log_scanner::log_path(&dir);
-                    let is_missing   = !log_path_str.exists();
-
-                    let panel = Box::new(Orientation::Vertical, 12);
-                    panel.set_halign(Align::Center);
-                    panel.set_valign(Align::Center);
-                    panel.set_vexpand(true);
-                    panel.set_margin_top(40);
-
-                    if is_missing {
-                        let icon = Label::new(Some("📄"));
-                        icon.set_halign(Align::Center);
-                        // Large emoji via CSS font-size
-                        icon.add_css_class("debug-no-log-icon");
-                        panel.append(&icon);
-
-                        let title = Label::new(Some("No log file found"));
-                        title.set_halign(Align::Center);
-                        title.add_css_class("debug-no-log-title");
-                        panel.append(&title);
-
-                        let body = Label::new(Some(
-                            "MelonLoader/Latest.log does not exist yet.\n\n\
-                             Launch ChilloutVR with MelonLoader installed at least once,\n\
-                             then come back and click 🔍 Scan Log."
-                        ));
-                        body.set_halign(Align::Center);
-                        body.set_justify(gtk4::Justification::Center);
-                        body.set_wrap(true);
-                        body.add_css_class("debug-no-log-body");
-                        panel.append(&body);
-
-                        let expected = Label::new(Some(&format!(
-                            "Expected location:\n{}",
-                            log_path_str.display()
-                        )));
-                        expected.set_halign(Align::Center);
-                        expected.set_justify(gtk4::Justification::Center);
-                        expected.set_wrap(true);
-                        expected.add_css_class("debug-no-log-path");
-                        panel.append(&expected);
-
-                        st.set_label("No log file found — launch the game first.");
-                    } else {
-                        let title = Label::new(Some("❌  Failed to read log"));
-                        title.set_halign(Align::Center);
-                        title.add_css_class("debug-no-log-title");
-                        panel.append(&title);
-
-                        let body = Label::new(Some(&e));
-                        body.set_halign(Align::Center);
-                        body.set_wrap(true);
-                        body.add_css_class("debug-no-log-body");
-                        panel.append(&body);
-
-                        st.set_label(&format!("Error reading log: {}", e));
-                    }
-
-                    fb.append(&panel);
-                }
-                Ok(report) => {
-                    // Header: ML version + game + loaded mods
-                    let header = Box::new(Orientation::Vertical, 4);
-                    header.add_css_class("debug-header-box");
-
-                    let summary_parts: Vec<String> = {
-                        let mut v = Vec::new();
-                        if let Some(ml) = &report.ml_version {
-                            v.push(format!("MelonLoader v{}", ml));
-                        }
-                        if let Some(game) = &report.game_name {
-                            let mut gs = game.clone();
-                            if let Some(ver) = &report.game_version { gs.push_str(&format!(" v{}", ver)); }
-                            v.push(gs);
-                        }
-                        if let Some(os) = &report.os_type {
-                            v.push(os.clone());
-                        }
-                        v
-                    };
-                    if !summary_parts.is_empty() {
-                        let sl = Label::new(Some(&summary_parts.join("  •  ")));
-                        sl.set_halign(Align::Start);
-                        sl.add_css_class("debug-summary-line");
-                        header.append(&sl);
-                    }
-
-                    // Loaded mods / plugins
-                    if !report.loaded_mods.is_empty() || !report.loaded_plugins.is_empty() {
-                        let ml = report.loaded_mods.len();
-                        let pl = report.loaded_plugins.len();
-                        let mods_lbl = Label::new(Some(&format!("Loaded: {} mod(s)  •  {} plugin(s)", ml, pl)));
-                        mods_lbl.set_halign(Align::Start);
-                        mods_lbl.add_css_class("debug-summary-line");
-                        header.append(&mods_lbl);
-
-                        // Expandable mod list
-                        let mod_list_box = Box::new(Orientation::Vertical, 2);
-                        mod_list_box.set_margin_start(16);
-                        for m in &report.loaded_mods {
-                            let mut txt = m.name.clone();
-                            if let Some(v) = &m.version { txt.push_str(&format!("  v{}", v)); }
-                            if let Some(a) = &m.author  { txt.push_str(&format!("  by {}", a)); }
-                            let l = Label::new(Some(&txt));
-                            l.set_halign(Align::Start);
-                            l.add_css_class("debug-mod-line");
-                            mod_list_box.append(&l);
-                        }
-                        for p in &report.loaded_plugins {
-                            let mut txt = format!("[Plugin] {}", p.name);
-                            if let Some(v) = &p.version { txt.push_str(&format!("  v{}", v)); }
-                            if let Some(a) = &p.author  { txt.push_str(&format!("  by {}", a)); }
-                            let l = Label::new(Some(&txt));
-                            l.set_halign(Align::Start);
-                            l.add_css_class("debug-mod-line");
-                            mod_list_box.append(&l);
-                        }
-                        header.append(&mod_list_box);
-                    }
-
-                    fb.append(&header);
-
-                    // Separator
-                    let sep = Separator::new(Orientation::Horizontal);
-                    sep.set_margin_top(6);
-                    sep.set_margin_bottom(6);
-                    fb.append(&sep);
-
-                    // Findings
-                    for finding in &report.findings {
-                        // Skip bare info lines already shown in header
-                        if finding.severity == crate::log_scanner::Severity::Info
-                            && (finding.category == "MelonLoader" || finding.category == "Game"
-                                || finding.category == "System" || finding.category == "Mods")
-                        {
-                            continue;
-                        }
-
-                        let row = Box::new(Orientation::Vertical, 2);
-                        row.set_margin_top(4);
-                        row.set_margin_bottom(4);
-                        row.add_css_class(match finding.severity {
-                            crate::log_scanner::Severity::Ok      => "debug-finding-ok",
-                            crate::log_scanner::Severity::Info    => "debug-finding-info",
-                            crate::log_scanner::Severity::Warning => "debug-finding-warn",
-                            crate::log_scanner::Severity::Error   => "debug-finding-error",
-                        });
-
-                        // Category header
-                        let icon = match finding.severity {
-                            crate::log_scanner::Severity::Ok      => "✅",
-                            crate::log_scanner::Severity::Info    => "ℹ",
-                            crate::log_scanner::Severity::Warning => "⚠",
-                            crate::log_scanner::Severity::Error   => "❌",
-                        };
-                        let cat_lbl = Label::new(Some(&format!("{} {}", icon, finding.category)));
-                        cat_lbl.set_halign(Align::Start);
-                        cat_lbl.add_css_class("debug-finding-category");
-                        row.append(&cat_lbl);
-
-                        // Message (supports multi-line bullet lists)
-                        let msg_lbl = Label::new(Some(&finding.message));
-                        msg_lbl.set_halign(Align::Start);
-                        msg_lbl.set_wrap(true);
-                        msg_lbl.set_xalign(0.0);
-                        msg_lbl.set_margin_start(18);
-                        msg_lbl.add_css_class("debug-finding-message");
-                        row.append(&msg_lbl);
-
-                        fb.append(&row);
-                    }
-
-                    let issues = report.findings.iter()
-                        .filter(|f| f.severity == crate::log_scanner::Severity::Error
-                               || f.severity == crate::log_scanner::Severity::Warning)
-                        .count();
-
-                    st.set_label(&format!(
-                        "Scan complete — {} line(s) read  •  {} mod(s) loaded  •  {} issue(s) found{}",
-                        report.line_count,
-                        report.loaded_mods.len() + report.loaded_plugins.len(),
-                        issues,
-                        if report.truncated { "  •  ⚠ Log truncated" } else { "" }
-                    ));
-                }
-            }
-
-            b.set_sensitive(true);
-            b.set_label("🔍  Scan Log");
-        });
-    }
-
-    // ── Wire: Open Log ────────────────────────────────────────────────────────
-    {
-        let state = state.clone();
-        open_log_btn.connect_clicked(move |_| {
-            let install_dir = state.lock().unwrap().install_dir.clone();
-            if let Some(dir) = install_dir {
-                let log = crate::log_scanner::log_path(&dir);
-                if log.exists() {
-                    install::open_folder(&log.parent().unwrap_or(&dir).display().to_string());
-                } else {
-                    show_error("Log not found",
-                        "MelonLoader/Latest.log does not exist. Has ChilloutVR been launched with MelonLoader at least once?");
-                }
-            }
-        });
-    }
-
-    (vbox, scan_btn)
-}
-
-
+// ── CSS ───────────────────────────────────────────────────────────────────────
 
 const DARK_CSS: &str = r#"
 * { font-family: "Inter", "Cantarell", "Segoe UI", sans-serif; }
@@ -2117,22 +1769,7 @@ notebook > header > tabs > tab:checked { color: #e94560; border-bottom: 2px soli
 .mods-listbox > row.unverified-row    { background-color: #1a1000; border-left: 3px solid #e67e22; }
 .mods-listbox > row.broken-retired-row { background-color: #1a0000; border-left: 3px solid #e74c3c; }
 
-/* Debug tab */
-.debug-header-box       { background-color: #111827; border-radius: 6px; padding: 10px 14px; margin-bottom: 4px; }
-.debug-summary-line     { font-size: 13px; color: #ccc; font-weight: bold; }
-.debug-mod-line         { font-size: 11px; color: #aaa; }
-.debug-finding-ok       { background-color: #0d1f0d; border-left: 3px solid #4caf50; border-radius: 4px; padding: 6px 10px; }
-.debug-finding-info     { background-color: #0d1626; border-left: 3px solid #5b9bd5; border-radius: 4px; padding: 6px 10px; }
-.debug-finding-warn     { background-color: #1a1600; border-left: 3px solid #f1c40f; border-radius: 4px; padding: 6px 10px; }
-.debug-finding-error    { background-color: #1a0000; border-left: 3px solid #e74c3c; border-radius: 4px; padding: 6px 10px; }
-.debug-finding-category { font-size: 12px; font-weight: bold; color: #e0e0e0; }
-.debug-finding-message  { font-size: 12px; color: #ccc; }
-.debug-no-log-icon      { font-size: 48px; margin-bottom: 8px; }
-.debug-no-log-title     { font-size: 18px; font-weight: bold; color: #ccc; }
-.debug-no-log-body      { font-size: 13px; color: #888; }
-.debug-no-log-path      { font-size: 11px; color: #555; font-family: monospace; margin-top: 8px; }
-
-
+/* Inputs */
 entry, searchentry { background-color: #0f1726; color: #e0e0e0; border: 1px solid #444; border-radius: 4px; padding: 5px; }
 entry:focus, searchentry:focus { border-color: #e94560; }
 checkbutton check { background-color: #0f1726; border: 1px solid #555; }
