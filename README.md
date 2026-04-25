@@ -10,6 +10,9 @@ Ported and maintained by **[Kneesox](https://kneesox.moe)**.
 
 ![CVR MelonLoader Assistant screenshot](screenshot.png)
 
+![CVR MelonLoader Assistant screenshot 2](screenshot.png)
+
+
 ## Features
 
 - 🔍 Auto-detects ChilloutVR via Steam on Linux (`~/.local/share/Steam`, Steam Deck, Flatpak)
