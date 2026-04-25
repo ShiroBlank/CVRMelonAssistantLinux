@@ -355,7 +355,9 @@ pub fn mod_version_outdated(mod_info: &Mod) -> bool {
     mod_has_update(mod_info)
 }
 
-pub async fn install_mod(mod_info: &Mod, install_dir: &Path) -> Result<PathBuf> {
+/// Download a mod and write it to disk. Returns (target_path, raw_bytes).
+/// Does NOT resolve dependencies — use install_mod for the full flow.
+async fn download_and_save(mod_info: &Mod, install_dir: &Path) -> Result<(PathBuf, Vec<u8>)> {
     let version = mod_info.versions.first().context("Mod has no versions")?;
     let download_link = version.download_link.as_deref().context("Mod has no download link")?;
 
@@ -365,17 +367,88 @@ pub async fn install_mod(mod_info: &Mod, install_dir: &Path) -> Result<PathBuf> 
         if p.exists() { fs::remove_file(p)?; }
     }
 
-    let bytes = api::download_to_bytes(download_link).await
-        .with_context(|| format!("Failed to download mod: {}", version.name))?;
+    let bytes = crate::api::download_to_bytes(download_link).await
+        .with_context(|| format!("Failed to download {}", version.name))?;
 
-    let subdir    = if version.is_plugin() { "Plugins" } else { "Mods" };
-    let subdir2   = if version.is_broken() { "Broken/" } else if version.is_retired() { "Retired/" } else { "" };
-    let filename  = download_link.split('/').last().unwrap_or("mod.dll");
+    // Derive filename from MelonInfoAttribute inside the DLL, fallback to version.name
+    let name_from_dll = crate::melon_dll::extract_melon_info(&bytes)
+        .map(|i| i.name)
+        .filter(|n| !n.trim().is_empty());
+    let base_name = name_from_dll.unwrap_or_else(|| version.name.clone());
+    let safe: String = base_name.chars().filter(|c| *c != '/' && *c != '\0').collect();
+    let safe = safe.trim().to_string();
+    let filename = if safe.is_empty() {
+        format!("mod_{}.dll", mod_info._id)
+    } else if safe.to_lowercase().ends_with(".dll") {
+        safe
+    } else {
+        format!("{}.dll", safe)
+    };
+
+    let subdir  = if version.is_plugin() { "Plugins" } else { "Mods" };
+    let subdir2 = if version.is_broken() { "Broken/" }
+                  else if version.is_retired() { "Retired/" }
+                  else { "" };
     let target_dir = install_dir.join(subdir).join(subdir2);
-
     fs::create_dir_all(&target_dir)?;
-    let target_path = target_dir.join(filename);
+    let target_path = target_dir.join(&filename);
     fs::File::create(&target_path)?.write_all(&bytes)?;
+    crate::log("INFO", &format!("Saved '{}' → {:?}", version.name, target_path));
+    Ok((target_path, bytes))
+}
+
+/// Install a mod. After saving, reads the AssemblyRef table from the DLL to find
+/// hard dependencies, then automatically downloads any that aren't already on disk.
+pub async fn install_mod(mod_info: &Mod, install_dir: &Path, all_mods: &[Mod]) -> Result<PathBuf> {
+    let (target_path, bytes) = download_and_save(mod_info, install_dir).await?;
+
+    // ── Auto-resolve dependencies from AssemblyRef table ─────────────────────
+    if crate::config::Config::load().auto_install_deps {
+        let additional_deps = crate::melon_dll::extract_additional_deps(&bytes);
+        if !additional_deps.is_empty() {
+            crate::log("INFO", &format!(
+                "Mod '{}' has {} dep(s): {:?}",
+                mod_info.versions.first().map(|v| v.name.as_str()).unwrap_or("?"),
+                additional_deps.len(), additional_deps
+            ));
+        }
+
+        for dep_name in &additional_deps {
+            let already_installed = scan_installed_mods(install_dir)
+                .iter()
+                .any(|(_, _, info)| {
+                    info.as_ref()
+                        .map(|i| i.name.eq_ignore_ascii_case(dep_name))
+                        .unwrap_or(false)
+                });
+
+            if already_installed {
+                crate::log("INFO", &format!("  dep '{}' already on disk, skipping", dep_name));
+                continue;
+            }
+
+            let dep_mod = all_mods.iter().find(|m| {
+                m.versions.first()
+                    .map(|v| v.name.eq_ignore_ascii_case(dep_name))
+                    .unwrap_or(false)
+                || m.aliases.iter().any(|a| a.eq_ignore_ascii_case(dep_name))
+            });
+
+            match dep_mod {
+                Some(dep) => {
+                    crate::log("INFO", &format!("  auto-installing dep '{}'", dep_name));
+                    if let Err(e) = download_and_save(dep, install_dir).await {
+                        crate::log("WARN", &format!(
+                            "  failed to auto-install dep '{}': {}", dep_name, e));
+                    }
+                }
+                None => {
+                    crate::log("WARN", &format!(
+                        "  dep '{}' not found in CVRMG API — install manually", dep_name));
+                }
+            }
+        }
+    }
 
     Ok(target_path)
 }

@@ -1,6 +1,6 @@
 // ui.rs — GTK4 GUI for CVR MelonLoader Assistant (Linux)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -21,6 +21,8 @@ struct AppState {
     install_dir: Option<PathBuf>,
     /// All mods from the API (with installed_file_path / installed_version filled in)
     mods: Vec<Mod>,
+    /// Category names that the user has collapsed
+    collapsed_categories: HashSet<String>,
 }
 
 type SharedState = Arc<Mutex<AppState>>;
@@ -50,21 +52,75 @@ pub fn build_ui(app: &Application) {
         .default_height(720)
         .build();
 
-    // Set frog icon from PNG bytes embedded at compile time.
-    // GTK4 ApplicationWindow doesn't have set_icon directly; we write the PNG
-    // to a temp file and add it to the icon theme search path, then set icon-name.
+    // ── App icon — Wayland + X11 ──────────────────────────────────────────────
+    // On Wayland the compositor resolves window icons via:
+    //   1. A .desktop file (matched by app-id) that has Icon=<name>
+    //   2. An icon named <name> in the XDG hicolor icon theme
+    // GTK's set_icon_name() only works on X11. We must do both ourselves.
     {
-        let icon_dir = std::env::temp_dir().join("cvr-melon-assistant-icons");
-        let icon_path = icon_dir.join("com.cvrmg.melon-assistant.png");
-        if std::fs::create_dir_all(&icon_dir).is_ok() {
-            if std::fs::write(&icon_path, crate::APP_ICON_PNG).is_ok() {
-                if let Some(display) = gdk4::Display::default() {
-                    let theme = gtk4::IconTheme::for_display(&display);
-                    theme.add_search_path(&icon_dir);
-                    window.set_icon_name(Some("com.cvrmg.melon-assistant"));
-                }
-            }
+        const APP_ID:   &str = "com.cvrmg.melon-assistant";
+        const APP_NAME: &str = "CVR MelonLoader Assistant";
+
+        let data_dir = dirs::data_local_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from(
+                std::env::var("HOME").unwrap_or_default() + "/.local/share"
+            ));
+
+        // ── 1. Write icon to hicolor theme ───────────────────────────────────
+        let icon_path = data_dir
+            .join("icons").join("hicolor").join("256x256").join("apps")
+            .join(format!("{}.png", APP_ID));
+        if let Some(p) = icon_path.parent() { let _ = std::fs::create_dir_all(p); }
+        let _ = std::fs::write(&icon_path, crate::APP_ICON_PNG);
+
+        // Also write a 48×48 copy (some compositors prefer it)
+        let icon_path_48 = data_dir
+            .join("icons").join("hicolor").join("48x48").join("apps")
+            .join(format!("{}.png", APP_ID));
+        if let Some(p) = icon_path_48.parent() { let _ = std::fs::create_dir_all(p); }
+        let _ = std::fs::write(&icon_path_48, crate::APP_ICON_PNG);
+
+        // ── 2. Write a .desktop file ─────────────────────────────────────────
+        // The compositor matches the running app-id against Desktop Entry files.
+        // The file must be named <app-id>.desktop and have Icon=<app-id>.
+        let desktop_dir = data_dir.join("applications");
+        let _ = std::fs::create_dir_all(&desktop_dir);
+        let desktop_path = desktop_dir.join(format!("{}.desktop", APP_ID));
+        let binary_path = std::env::current_exe()
+            .unwrap_or_else(|_| std::path::PathBuf::from("cvr-melon-assistant"));
+        let desktop_content = format!(
+            "[Desktop Entry]\n\
+             Type=Application\n\
+             Name={}\n\
+             Exec={}\n\
+             Icon={}\n\
+             Categories=Game;Utility;\n\
+             StartupWMClass={}\n\
+             StartupNotify=true\n",
+            APP_NAME,
+            binary_path.display(),
+            APP_ID,
+            APP_ID,
+        );
+        let _ = std::fs::write(&desktop_path, &desktop_content);
+
+        // ── 3. Flush the icon theme cache ────────────────────────────────────
+        // gtk-update-icon-cache tells GTK (and some compositors) about the new icon.
+        let hicolor_dir = data_dir.join("icons").join("hicolor");
+        let _ = std::process::Command::new("gtk-update-icon-cache")
+            .arg("-f").arg("-t").arg(&hicolor_dir)
+            .spawn();
+        // update-desktop-database refreshes the .desktop file index
+        let _ = std::process::Command::new("update-desktop-database")
+            .arg(&desktop_dir)
+            .spawn();
+
+        // ── 4. GTK icon name (X11 fallback) ──────────────────────────────────
+        if let Some(display) = gdk4::Display::default() {
+            let theme = gtk4::IconTheme::for_display(&display);
+            theme.add_search_path(data_dir.join("icons"));
         }
+        window.set_icon_name(Some(APP_ID));
     }
 
     crate::log("INFO", "build_ui: applying CSS");
@@ -399,6 +455,7 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                 }
             };
             let mods_snapshot = st.lock().unwrap().mods.clone();
+            let all_mods = mods_snapshot.clone();
             let targets: Vec<Mod> = mods_snapshot.into_iter()
                 .filter(|m| checked.contains(&m._id))
                 .filter(|m| !m.is_unverified)  // never auto-install unverified mods
@@ -408,7 +465,7 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                     let mut ok = 0usize;
                     let mut fail = 0usize;
                     for m in &targets {
-                        match install::install_mod(m, &dir).await {
+                        match install::install_mod(m, &dir, &all_mods).await {
                             Ok(_)  => ok += 1,
                             Err(_) => fail += 1,
                         }
@@ -467,6 +524,7 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                 }
             };
             let mods_snapshot = st.lock().unwrap().mods.clone();
+            let all_mods = mods_snapshot.clone();
             // Step 1: quarantine broken AND retired mods before updating
             let quarantined_broken  = install::quarantine_broken_mods(&mods_snapshot, &dir);
             let quarantined_retired = install::quarantine_retired_mods(&mods_snapshot, &dir);
@@ -481,7 +539,7 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                     let mut updated = 0usize;
                     let mut failed  = 0usize;
                     for m in &outdated {
-                        match install::install_mod(m, &dir).await {
+                        match install::install_mod(m, &dir, &all_mods).await {
                             Ok(_)  => updated += 1,
                             Err(_) => failed  += 1,
                         }
@@ -659,13 +717,34 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
     // ── Wire: Search ──────────────────────────────────────────────────────────
     {
         let lb = listbox.clone();
+        let state_ref = state.clone();
         search.connect_search_changed(move |entry| {
             let q = entry.text().to_lowercase();
+            let collapsed = {
+                let s = state_ref.lock().unwrap();
+                s.collapsed_categories.clone()
+            };
             let mut row = lb.first_child();
             while let Some(r) = row {
                 let next = r.next_sibling();
-                let name = r.widget_name().to_lowercase();
-                r.set_visible(q.is_empty() || name.contains(&q));
+                let wname = r.widget_name().to_string();
+                if wname.starts_with("cat:") {
+                    // Category headers always visible
+                    r.set_visible(true);
+                } else if wname.starts_with("mod:") {
+                    // widget name: "mod:CATKEY|searchable text"
+                    let after_prefix = &wname["mod:".len()..];
+                    let (cat_key, search_text) = after_prefix
+                        .split_once('|')
+                        .unwrap_or((after_prefix, after_prefix));
+                    if q.is_empty() {
+                        r.set_visible(!collapsed.contains(cat_key));
+                    } else {
+                        r.set_visible(search_text.contains(&q));
+                    }
+                } else {
+                    r.set_visible(q.is_empty() || wname.contains(&q));
+                }
                 row = next;
             }
         });
@@ -916,56 +995,106 @@ fn populate_mod_list(
     // Rebuild list rows
     while let Some(child) = listbox.first_child() { listbox.remove(&child); }
 
+    let collapsed = {
+        let s = state.lock().unwrap();
+        s.collapsed_categories.clone()
+    };
+
+    // Helper to append a category header and wire its toggle
+    let append_category = |lb: &ListBox, st: &SharedState, cat_name: &str| {
+        let is_collapsed = collapsed.contains(cat_name);
+        let row = make_category_row(cat_name, is_collapsed);
+        let cat_key = cat_name.to_string();
+        let st2 = st.clone();
+        let lb2 = lb.clone();
+        // GestureClick fires reliably on mouse clicks; connect_activate only
+        // fires for keyboard activation in GTK4's ListBox.
+        let gesture = gtk4::GestureClick::new();
+        gesture.connect_released(move |_, _, _, _| {
+            toggle_category(&lb2, &cat_key, &st2);
+        });
+        row.add_controller(gesture);
+        lb.append(&row);
+    };
+
     // ── Normal mods by category ───────────────────────────────────────────────
     let mut current_cat = String::new();
     for m in &normal {
-        // Skip quarantined mods unless the option is enabled
         if !show_quarantined && is_quarantined(m) { continue; }
 
         let cat = m.display_category();
         if cat != current_cat {
             current_cat = cat.clone();
-            listbox.append(&make_category_row(&cat));
+            append_category(listbox, state, &cat);
         }
-        listbox.append(&make_mod_row(m));
+        let mod_row = make_mod_row(m);
+        // Tag with category so the toggle handler can find it
+        // Replace the __pending__ placeholder with the real category key
+        {
+            let existing = mod_row.widget_name().to_string();
+            let new_name = existing.replacen("mod:__pending__", &format!("mod:{}", current_cat.to_lowercase()), 1);
+            mod_row.set_widget_name(&new_name);
+        }
+        if collapsed.contains(&current_cat) {
+            mod_row.set_visible(false);
+        }
+        listbox.append(&mod_row);
     }
 
     // ── Broken / Retired category ─────────────────────────────────────────────
     if !broken_retired.is_empty() {
-        listbox.append(&make_category_row("Broken / Retired"));
+        let cat_name = "Broken / Retired";
+        append_category(listbox, state, cat_name);
         for m in &broken_retired {
             if !show_quarantined && is_quarantined(m) { continue; }
-            listbox.append(&make_mod_row(m));
+            let mod_row = make_mod_row(m);
+            {
+                let existing = mod_row.widget_name().to_string();
+                let new_name = existing.replacen("mod:__pending__", &format!("mod:{}", cat_name.to_lowercase()), 1);
+                mod_row.set_widget_name(&new_name);
+            }
+            if collapsed.contains(cat_name) { mod_row.set_visible(false); }
+            listbox.append(&mod_row);
         }
-    } else if !group_broken_retired {
-        // When not grouping, broken/retired are in normal categories above,
-        // but quarantined files should still be checked there (already handled)
     }
 
-    // ── Quarantined files shown separately when option is on ──────────────────
-    // These are mods whose files are in Broken/ or Retired/ dirs but might
-    // not be in the broken_retired partition (e.g. an old mod no longer in API)
+    // ── Quarantined files ─────────────────────────────────────────────────────
     if show_quarantined {
         let quarantined_unmatched: Vec<&Mod> = unverified.iter()
             .filter(|m| is_quarantined(m))
             .collect();
         if !quarantined_unmatched.is_empty() {
-            listbox.append(&make_category_row("Quarantined (Not in CVRMG)"));
+            let cat_name = "Quarantined (Not in CVRMG)";
+            append_category(listbox, state, cat_name);
             for m in quarantined_unmatched {
-                listbox.append(&make_mod_row(m));
+                let mod_row = make_mod_row(m);
+                {
+                let existing = mod_row.widget_name().to_string();
+                let new_name = existing.replacen("mod:__pending__", &format!("mod:{}", cat_name.to_lowercase()), 1);
+                mod_row.set_widget_name(&new_name);
+            }
+                if collapsed.contains(cat_name) { mod_row.set_visible(false); }
+                listbox.append(&mod_row);
             }
         }
     }
 
     // ── Unverified mods ───────────────────────────────────────────────────────
     let unverified_active: Vec<&Mod> = unverified.iter()
-        .filter(|m| !is_quarantined(m) || show_quarantined)
-        .filter(|m| !is_quarantined(m)) // non-quarantined unverified go here
+        .filter(|m| !is_quarantined(m))
         .collect();
     if !unverified_active.is_empty() {
-        listbox.append(&make_category_row("User Installed — NOT VERIFIED BY CVRMG STAFF"));
+        let cat_name = "User Installed — NOT VERIFIED BY CVRMG STAFF";
+        append_category(listbox, state, cat_name);
         for m in unverified_active {
-            listbox.append(&make_mod_row(m));
+            let mod_row = make_mod_row(m);
+            {
+                let existing = mod_row.widget_name().to_string();
+                let new_name = existing.replacen("mod:__pending__", &format!("mod:{}", cat_name.to_lowercase()), 1);
+                mod_row.set_widget_name(&new_name);
+            }
+            if collapsed.contains(cat_name) { mod_row.set_visible(false); }
+            listbox.append(&mod_row);
         }
     }
 
@@ -977,15 +1106,79 @@ fn populate_mod_list(
     n_updates
 }
 
+// ── Category collapse toggle ──────────────────────────────────────────────────
+
+/// Toggle the collapsed state of a category in the listbox.
+/// Walks all rows, hides/shows those tagged with `"mod:<cat_key>"`,
+/// and flips the chevron on the category header row.
+fn toggle_category(listbox: &ListBox, cat_name: &str, state: &SharedState) {
+    // Update the collapsed set in state
+    let now_collapsed = {
+        let mut s = state.lock().unwrap();
+        if s.collapsed_categories.contains(cat_name) {
+            s.collapsed_categories.remove(cat_name);
+            false
+        } else {
+            s.collapsed_categories.insert(cat_name.to_string());
+            true
+        }
+    };
+
+    let mod_tag  = format!("mod:{}", cat_name.to_lowercase());
+    let cat_tag  = format!("cat:{}", cat_name.to_lowercase());
+
+    let mut row = listbox.first_child();
+    while let Some(r) = row {
+        let next = r.next_sibling();
+        let name = r.widget_name().to_string();
+
+        if name.starts_with(&mod_tag) && (name.len() == mod_tag.len() || name.as_bytes().get(mod_tag.len()) == Some(&b'|')) {
+            r.set_visible(!now_collapsed);
+        } else if name == cat_tag {
+            // Update chevron label inside the category header
+            if let Some(child) = r.first_child() {  // the hbox
+                let mut hchild = child.first_child();
+                while let Some(w) = hchild {
+                    let wnext = w.next_sibling();
+                    if w.widget_name() == "chevron" {
+                        if let Some(lbl) = w.downcast_ref::<Label>() {
+                            lbl.set_text(if now_collapsed { "▶" } else { "▼" });
+                        }
+                    }
+                    hchild = wnext;
+                }
+            }
+        }
+
+        row = next;
+    }
+}
+
 // ── Row builders ──────────────────────────────────────────────────────────────
 
-fn make_category_row(name: &str) -> ListBoxRow {
+fn make_category_row(name: &str, collapsed: bool) -> ListBoxRow {
     let row = ListBoxRow::new();
     row.set_selectable(false);
-    row.set_activatable(false);
+    row.set_activatable(true); // clickable to toggle
     row.add_css_class("category-row");
+    // Store category name in widget-name for the toggle handler
+    row.set_widget_name(&format!("cat:{}", name.to_lowercase()));
+
+    let hbox = Box::new(Orientation::Horizontal, 6);
+    hbox.set_margin_start(8);
+    hbox.set_margin_end(8);
+    hbox.set_margin_top(3);
+    hbox.set_margin_bottom(3);
+
+    // Chevron indicator
+    let chevron = Label::new(Some(if collapsed { "▶" } else { "▼" }));
+    chevron.set_widget_name("chevron");
+    chevron.add_css_class("category-chevron");
+    hbox.append(&chevron);
+
     let lbl = Label::new(Some(name));
     lbl.set_halign(Align::Start);
+    lbl.set_hexpand(true);
     if name.contains("NOT VERIFIED") {
         lbl.add_css_class("category-label-unverified");
     } else if name == "Broken / Retired" || name.contains("Quarantined") {
@@ -993,8 +1186,9 @@ fn make_category_row(name: &str) -> ListBoxRow {
     } else {
         lbl.add_css_class("category-label");
     }
-    row.set_child(Some(&lbl));
-    row.set_widget_name(&name.to_lowercase());
+    hbox.append(&lbl);
+
+    row.set_child(Some(&hbox));
     row
 }
 
@@ -1110,8 +1304,9 @@ fn make_mod_row(m: &Mod) -> ListBoxRow {
 
     row.set_child(Some(&hbox));
 
-    // Use mod name for search
-    row.set_widget_name(&format!("{} {} {}",
+    // Widget name encodes "mod:CATEGORY_KEY|SEARCHABLE_TEXT"
+    // populated_mod_list overwrites the category part after construction
+    row.set_widget_name(&format!("mod:__pending__|{} {} {}",
         ver.map(|v| v.name.as_str()).unwrap_or(""),
         ver.and_then(|v| v.description.as_deref()).unwrap_or(""),
         m.display_category()
@@ -1572,6 +1767,20 @@ fn build_options_tab(
     }
     vbox.append(&quarantine_check);
 
+    let deps_check = CheckButton::with_label(
+        "Automatically install missing mod dependencies when installing a mod"
+    );
+    deps_check.set_active(Config::load().auto_install_deps);
+    deps_check.add_css_class("options-check");
+    {
+        deps_check.connect_toggled(|check| {
+            let mut cfg = Config::load();
+            cfg.auto_install_deps = check.is_active();
+            let _ = cfg.save();
+        });
+    }
+    vbox.append(&deps_check);
+
     let cfg_info = Label::new(Some(&format!(
         "Config: {}",
         Config::config_path().display()
@@ -1618,7 +1827,8 @@ fn build_about_tab() -> Box {
     let body = Label::new(Some(
         "A mod manager for ChilloutVR using MelonLoader, for Linux via Proton.\n\
          This is an unofficial Linux port of the original Windows app by Nirv-git & knah.\n\n\
-         Ported and maintained by Kneesox  •  kneesox.moe"
+         Ported and maintained by Kneesox  •  kneesox.moe\n\
+         Log scanner ported from Lumbot by Slaynash"
     ));
     body.set_justify(Justification::Center);
     body.set_wrap(true);
@@ -1633,6 +1843,7 @@ fn build_about_tab() -> Box {
         ("GitHub (Linux Port)", "https://github.com/ShiroBlank/CVRMelonAssistantLinux"),
         ("Original Windows App","https://github.com/Nirv-git/CVRMelonAssistant"),
         ("Kneesox's Website",   "https://kneesox.moe"),
+        ("Lumbot (Slaynash)",   "https://github.com/Slaynash/Lumbot"),
         ("MelonLoader Wiki",    "https://melonwiki.xyz"),
     ] {
         let btn = Button::with_label(label);
@@ -1985,9 +2196,10 @@ fn build_debug_tab(state: &SharedState) -> (Box, Button) {
                         .count();
 
                     st.set_label(&format!(
-                        "Scan complete — {} line(s) read  •  {} mod(s) loaded  •  {} issue(s) found{}",
+                        "Scan complete — {} line(s) read  •  {} mod(s)  •  {} plugin(s)  •  {} issue(s) found{}",
                         report.line_count,
-                        report.loaded_mods.len() + report.loaded_plugins.len(),
+                        report.loaded_mods.len(),
+                        report.loaded_plugins.len(),
                         issues,
                         if report.truncated { "  •  ⚠ Log truncated" } else { "" }
                     ));
@@ -2078,7 +2290,9 @@ notebook > header > tabs > tab:checked { color: #e94560; border-bottom: 2px soli
 .mod-meta   { font-size: 11px; color: #999; }
 .installed-ver { font-size: 11px; color: #4caf50; font-weight: bold; }
 .category-row { background-color: #0f1726; }
-.category-label { font-weight: bold; font-size: 12px; color: #e94560; text-transform: uppercase; letter-spacing: 1px; margin: 2px 8px; }
+.category-row:hover { background-color: #171f35; }
+.category-chevron { font-size: 10px; color: #666; min-width: 12px; }
+.category-label { font-weight: bold; font-size: 12px; color: #e94560; text-transform: uppercase; letter-spacing: 1px; margin: 2px 4px; }
 
 /* Status badges */
 .badge-update      { color: #f1c40f; font-weight: bold; font-size: 11px; }

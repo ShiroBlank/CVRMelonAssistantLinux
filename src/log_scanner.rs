@@ -141,13 +141,13 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
     let mut duplicates:          Vec<String> = Vec::new();
     let mut old_mods:            Vec<String> = Vec::new();
     let mut known_errors:        Vec<String> = Vec::new();
+    // "ModName is missing dependency DepName" pairs
+    let mut missing_dep_pairs:   Vec<(String, String)> = Vec::new();
 
     // ── Mod listing state machine ─────────────────────────────────────────────
-    // In this version of ML the listing uses "Melon Assembly loaded" blocks
-    // followed by a named listing section.
     let mut listing_plugins     = false;
     let mut listing_mods        = false;
-    let mut pre_listing         = false;    // saw "Loading Mods from ..."
+    let mut pre_listing         = false;
     let mut remaining_count     = 0i32;
 
     // Temp mod accumulator during the named listing
@@ -160,6 +160,10 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
     // Incompatibility parsing state
     let mut reading_incompat    = false;
     let mut incompat_source:    Option<String> = None;
+
+    // Missing-dependency block state (Lumbot pattern)
+    let mut reading_missing_deps     = false;
+    let mut missing_dep_mod_source:  Option<String> = None;
 
     // ── Main parse loop ───────────────────────────────────────────────────────
     let mut i = 0;
@@ -225,6 +229,35 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
             }
         }
 
+        // ── Missing dependencies block ────────────────────────────────────────
+        // "Some mods are missing dependencies, which you may have to install."
+        // "- 'ModName' is missing the following dependencies:"
+        // "    - 'DepName'"
+        if content_part.to_lowercase().contains("some mods are missing dependencies") {
+            reading_missing_deps = true;
+            continue;
+        }
+        if reading_missing_deps {
+            let trimmed = content_part.trim_start_matches([' ', '-']).trim();
+            if trimmed.starts_with('\'') || trimmed.starts_with('"') {
+                if trimmed.to_lowercase().contains("is missing the following dependencies") {
+                    // "- 'ModName' is missing the following dependencies:"
+                    missing_dep_mod_source = extract_quoted(trimmed);
+                } else if let Some(ref src) = missing_dep_mod_source.clone() {
+                    // "    - 'DepName'"
+                    if let Some(dep) = extract_quoted(trimmed) {
+                        missing_dep_pairs.push((src.clone(), dep));
+                    }
+                }
+                continue;
+            } else if !trimmed.is_empty() && !trimmed.starts_with('[') {
+                // Non-bullet non-empty line ends the block
+                reading_missing_deps    = false;
+                missing_dep_mod_source  = None;
+                // fall through
+            }
+        }
+
         // ── Incompatibility block ─────────────────────────────────────────────
         // "Some Melons are marked as incompatible with each other."
         // "- 'OSC' is incompatible with the following Melons:"
@@ -286,11 +319,23 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
             if !name.is_empty() && !duplicates.contains(&name) { duplicates.push(name); }
         }
 
-        // ── Missing dependencies ──────────────────────────────────────────────
+        // ── Missing assemblies ────────────────────────────────────────────────
+        // Only match "Could not load file or assembly '...'" — NOT "Could not
+        // load type of field '...'" which produces cascading noise like
+        // "VideoRemote.VideoRemoteMod:VideoPlayerListMain".
         if content_part.contains("Could not load file or assembly '") {
             if let Some(dep) = content_part.split('\'').nth(1) {
-                let dep = dep.to_string();
-                if !dep.contains("UnityEngine") && !dep.starts_with("System.") && !missing_deps.contains(&dep) {
+                // Strip ", Version=..." suffix — we only want the assembly name
+                let dep = dep.split(',').next().unwrap_or(dep).trim().to_string();
+                // Filter out:
+                //   • UnityEngine / System.* (runtime internals)
+                //   • Anything containing ':' (type field references, not assemblies)
+                //   • Anything that looks like a namespace path (contains '.' AND ':')
+                let is_real_assembly = !dep.contains("UnityEngine")
+                    && !dep.starts_with("System.")
+                    && !dep.contains(':')   // "Mod.Class:field" is a type, not an assembly
+                    && !dep.is_empty();
+                if is_real_assembly && !missing_deps.contains(&dep) {
                     missing_deps.push(dep);
                 }
             }
@@ -395,15 +440,25 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
             if is_separator {
                 // Commit current mod/plugin if complete
                 if let Some(name) = tmp_name.take() {
-                    let entry = LoadedMod {
-                        name,
-                        version:  tmp_version.take(),
-                        author:   tmp_author.take(),
-                        hash:     tmp_hash.take(),
-                        assembly: tmp_assembly.take(),
-                    };
-                    if listing_plugins { report.loaded_plugins.push(entry); }
-                    else               { report.loaded_mods.push(entry); }
+                    // Discard garbage entries from the pre-load assembly block
+                    if !name.starts_with("Melon Assembly loaded")
+                        && !name.starts_with("Support Module")
+                        && !name.starts_with("Failed to load")
+                    {
+                        let entry = LoadedMod {
+                            name,
+                            version:  tmp_version.take(),
+                            author:   tmp_author.take(),
+                            hash:     tmp_hash.take(),
+                            assembly: tmp_assembly.take(),
+                        };
+                        if listing_plugins { report.loaded_plugins.push(entry); }
+                        else               { report.loaded_mods.push(entry); }
+                    } else {
+                        // Clear temps without committing
+                        tmp_version.take(); tmp_author.take();
+                        tmp_hash.take(); tmp_assembly.take();
+                    }
 
                     if remaining_count > 0 {
                         remaining_count -= 1;
@@ -413,6 +468,11 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
                         }
                     }
                 }
+                continue;
+            }
+
+            // Skip pre-load assembly info lines — not actual named mod entries
+            if content_part.starts_with("Melon Assembly loaded:") {
                 continue;
             }
 
@@ -511,6 +571,28 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
             &format!("The following mods conflict and won't both load:\n{}", fmt_list(&incompatible_pairs))));
     }
 
+    if !missing_dep_pairs.is_empty() {
+        // Group by dependency name: BTKUILib → [ASTExtension, JoinMe, ...]
+        let mut dep_to_mods: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for (mod_name, dep) in &missing_dep_pairs {
+            dep_to_mods
+                .entry(dep.clone())
+                .or_default()
+                .push(mod_name.clone());
+        }
+        // Deduplicate mod lists and sort
+        for mods in dep_to_mods.values_mut() {
+            mods.sort();
+            mods.dedup();
+        }
+        let lines: Vec<String> = dep_to_mods.iter()
+            .map(|(dep, mods)| format!("{} — needed by: {}", dep, mods.join(", ")))
+            .collect();
+        report.findings.push(Finding::err("Missing Dependencies",
+            &format!("Install the following missing dependencies:\n{}", fmt_list(&lines))));
+    }
+
     if !type_load_failures.is_empty() {
         report.findings.push(Finding::err("Assembly Load Failures",
             &format!(
@@ -520,12 +602,16 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
     }
 
     if !missing_deps.is_empty() {
+        // Only show deps not already covered by the structured missing-deps block above
+        let already_shown: std::collections::HashSet<&str> =
+            missing_dep_pairs.iter().map(|(_, d)| d.as_str()).collect();
         let filtered: Vec<_> = missing_deps.iter()
             .filter(|d| !d.contains("UnityEngine") && !d.starts_with("System."))
+            .filter(|d| !already_shown.contains(d.as_str()))
             .collect();
         if !filtered.is_empty() {
-            report.findings.push(Finding::err("Missing Dependencies",
-                &format!("Missing assemblies:\n{}", fmt_list_ref(&filtered))));
+            report.findings.push(Finding::err("Missing Assemblies",
+                &format!("Could not load:\n{}", fmt_list_ref(&filtered))));
         }
     }
 

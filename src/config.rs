@@ -23,6 +23,9 @@ pub struct Config {
     /// Whether the user has already seen the Debug tab intro dialog (default: false)
     #[serde(default)]
     pub debug_intro_shown: bool,
+    /// Automatically download and install missing dependencies when installing a mod (default: true)
+    #[serde(default = "default_true")]
+    pub auto_install_deps: bool,
 }
 
 fn default_true() -> bool { true }
@@ -38,6 +41,7 @@ impl Default for Config {
             show_broken_retired_category: true,
             show_quarantined_mods: false,
             debug_intro_shown: false,
+            auto_install_deps: true,
         }
     }
 }
