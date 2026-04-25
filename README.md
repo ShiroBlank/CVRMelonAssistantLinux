@@ -23,7 +23,7 @@ Ported and maintained by **[Kneesox](https://kneesox.moe)**.
 - 👤 Detects user-installed mods not listed in CVRMG and shows them separately — they are never auto-updated
 - 🔎 Search and filter mods by name or description
 - 🎨 Dark-themed GTK4 GUI
-- 🍉 Parse and analyize melon loader logs to find broken mods and issues.
+- 🍉 Parse and analyze melon loader logs to find broken mods and issues.
 
 ## Building
 
