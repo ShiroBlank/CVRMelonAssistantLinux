@@ -17,7 +17,7 @@ pub struct Config {
     /// instead of their normal category (default: true)
     #[serde(default = "default_true")]
     pub show_broken_retired_category: bool,
-    /// Show mods whose files are in Mods/Broken or Mods/Retired on disk (default: false)
+    /// Show mods whose files are in Mods/~Broken or Mods/~Retired on disk (default: false)
     #[serde(default)]
     pub show_quarantined_mods: bool,
     /// Whether the user has already seen the Debug tab intro dialog (default: false)

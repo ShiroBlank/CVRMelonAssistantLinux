@@ -142,7 +142,7 @@ pub struct QuarantineResult {
 }
 
 /// Walk all installed mods and move any that the API marks as broken into
-/// `Mods/Broken/` (or `Plugins/Broken/`), creating the directory if needed.
+/// `Mods/~Broken/` (or `Plugins/~Broken/`), creating the directory if needed.
 ///
 /// Returns a list of moves that were performed so the UI can report them.
 pub fn quarantine_broken_mods(
@@ -164,15 +164,30 @@ pub fn quarantine_broken_mods(
             None => continue,
         };
 
+        // If the installed version is higher than the latest API version the mod
+        // has likely been patched locally — leave it alone.
+        if let (Some(installed_ver), Some(api_ver)) = (
+            m.installed_version.as_deref(),
+            version.mod_version.as_deref(),
+        ) {
+            if crate::api::is_newer_version(api_ver, installed_ver) {
+                Config::log(&format!(
+                    "Skipping quarantine of broken mod '{}': installed {} > api {} (locally patched?)",
+                    version.name, installed_ver, api_ver
+                ), "info");
+                continue;
+            }
+        }
+
         // If the file is already inside a Broken/ subdirectory, leave it alone
         let path_str = installed_path.to_string_lossy().to_lowercase();
-        if path_str.contains("/broken/") || path_str.contains("\\broken\\") {
+        if path_str.contains("/~broken/") || path_str.contains("\\~broken\\") {
             continue;
         }
 
         // Determine target Broken/ folder (Mods/Broken or Plugins/Broken)
         let subdir = if version.is_plugin() { "Plugins" } else { "Mods" };
-        let broken_dir = install_dir.join(subdir).join("Broken");
+        let broken_dir = install_dir.join(subdir).join("~Broken");
         if let Err(e) = fs::create_dir_all(&broken_dir) {
             Config::log(&format!("Could not create Broken dir {:?}: {}", broken_dir, e), "warn");
             continue;
@@ -216,7 +231,7 @@ pub fn quarantine_broken_mods(
 }
 
 /// Walk all installed mods and move any that the API marks as retired into
-/// `Mods/Retired/` (or `Plugins/Retired/`), creating the directory if needed.
+/// `Mods/~Retired/` (or `Plugins/~Retired/`), creating the directory if needed.
 pub fn quarantine_retired_mods(
     mods: &[Mod],
     install_dir: &Path,
@@ -235,14 +250,29 @@ pub fn quarantine_retired_mods(
             None => continue,
         };
 
+        // If the installed version is higher than the latest API version the mod
+        // has likely been patched locally — leave it alone.
+        if let (Some(installed_ver), Some(api_ver)) = (
+            m.installed_version.as_deref(),
+            version.mod_version.as_deref(),
+        ) {
+            if crate::api::is_newer_version(api_ver, installed_ver) {
+                Config::log(&format!(
+                    "Skipping quarantine of retired mod '{}': installed {} > api {} (locally patched?)",
+                    version.name, installed_ver, api_ver
+                ), "info");
+                continue;
+            }
+        }
+
         // Already in a Retired/ subdirectory — leave it alone
         let path_str = installed_path.to_string_lossy().to_lowercase();
-        if path_str.contains("/retired/") || path_str.contains("\\retired\\") {
+        if path_str.contains("/~retired/") || path_str.contains("\\~retired\\") {
             continue;
         }
 
         let subdir = if version.is_plugin() { "Plugins" } else { "Mods" };
-        let retired_dir = install_dir.join(subdir).join("Retired");
+        let retired_dir = install_dir.join(subdir).join("~Retired");
         if let Err(e) = fs::create_dir_all(&retired_dir) {
             Config::log(&format!("Could not create Retired dir {:?}: {}", retired_dir, e), "warn");
             continue;
@@ -278,46 +308,49 @@ pub fn quarantine_retired_mods(
 
 
 /// Returns (path, md5_hash, Option<MelonInfo>) for every .dll found.
+/// Recursively scans all subdirectories inside Mods/ and Plugins/.
+/// Subdirectories beginning with '~' (e.g. ~Broken, ~Retired) are scanned but
+/// their contents are tagged as quarantined by their path.
 pub fn scan_installed_mods(install_dir: &Path) -> Vec<(PathBuf, String, Option<crate::melon_dll::MelonInfo>)> {
     let mut found = Vec::new();
     crate::log("INFO", &format!("scan_installed_mods: scanning {}", install_dir.display()));
 
     for subdir in &["Mods", "Plugins"] {
-        for sub2 in &["", "Broken", "Retired"] {
-            let dir = if sub2.is_empty() {
-                install_dir.join(subdir)
-            } else {
-                install_dir.join(subdir).join(sub2)
-            };
-
-            if !dir.exists() { continue; }
-            crate::log("INFO", &format!("  scanning: {}", dir.display()));
-
-            let entries = match fs::read_dir(&dir) {
-                Ok(e) => e,
-                Err(e) => { crate::log("WARN", &format!("  can't read dir: {}", e)); continue; }
-            };
-
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("dll") { continue; }
-
-                let hash = match calculate_md5(&path) {
-                    Some(h) => h,
-                    None => { crate::log("WARN", &format!("  can't hash: {}", path.display())); continue; }
-                };
-
-                let info = crate::melon_dll::read_melon_info(&path);
-                crate::log("INFO", &format!("  found: {}  md5={}  melon={:?}",
-                    path.display(), &hash[..8], info.as_ref().map(|i| format!("{} v{}", i.name, i.version))));
-
-                found.push((path, hash, info));
-            }
-        }
+        let base = install_dir.join(subdir);
+        if !base.exists() { continue; }
+        scan_dir_recursive(&base, &mut found);
     }
 
     crate::log("INFO", &format!("scan_installed_mods: {} files found", found.len()));
     found
+}
+
+fn scan_dir_recursive(
+    dir: &Path,
+    out: &mut Vec<(PathBuf, String, Option<crate::melon_dll::MelonInfo>)>,
+) {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => { crate::log("WARN", &format!("  can't read dir {}: {}", dir.display(), e)); return; }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            // Recurse into all subdirectories (including ~Broken, ~Retired, and any
+            // user-created subdirs). MelonLoader itself recurses all non-~-prefixed dirs.
+            scan_dir_recursive(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("dll") {
+            let hash = match calculate_md5(&path) {
+                Some(h) => h,
+                None => { crate::log("WARN", &format!("  can't hash: {}", path.display())); continue; }
+            };
+            let info = crate::melon_dll::read_melon_info(&path);
+            crate::log("INFO", &format!("  found: {}  md5={}  melon={:?}",
+                path.display(), &hash[..8], info.as_ref().map(|i| format!("{} v{}", i.name, i.version))));
+            out.push((path, hash, info));
+        }
+    }
 }
 
 /// Returns true if the installed version is older than the latest API version
@@ -333,7 +366,7 @@ pub fn mod_has_update(mod_info: &Mod) -> bool {
 
     // Mods in Broken/ or Retired/ are quarantined — not eligible for updates
     let path_lower = installed_path.to_lowercase();
-    if path_lower.contains("/broken/") || path_lower.contains("/retired/") {
+    if path_lower.contains("/~broken/") || path_lower.contains("/~retired/") {
         return false;
     }
 
@@ -386,8 +419,8 @@ async fn download_and_save(mod_info: &Mod, install_dir: &Path) -> Result<(PathBu
     };
 
     let subdir  = if version.is_plugin() { "Plugins" } else { "Mods" };
-    let subdir2 = if version.is_broken() { "Broken/" }
-                  else if version.is_retired() { "Retired/" }
+    let subdir2 = if version.is_broken() { "~Broken/" }
+                  else if version.is_retired() { "~Retired/" }
                   else { "" };
     let target_dir = install_dir.join(subdir).join(subdir2);
     fs::create_dir_all(&target_dir)?;

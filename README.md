@@ -15,16 +15,14 @@ Ported and maintained by **[Kneesox](https://kneesox.moe)**.
 
 ## Features
 
-- 🔍 Auto-detects ChilloutVR via Steam
-- 📦 Browse, install, and uninstall mods from the CVRMG mod repository
-- ⬆️ Detect and update outdated mods 
-- 🔗 Automatically resolves and installs mod dependencies on install
-- ⬇️ Install / update / remove MelonLoader
-- 🚫 Automatically quarantines mods marked **broken** or **retired** on update
-- 👤 Detects user-installed mods not listed in CVRMG — shown separately, never auto-updated
-- 🔎 Collapsible categories, search, and mod filtering
-- 🐛 Log scanner — parses MelonLoader logs to diagnose issues and missing dependencies
-- 🎨 Dark-themed GTK4 GUI
+- Auto-detects ChilloutVR via Steam on Linux (`~/.local/share/Steam`, Steam Deck, Flatpak)
+- Browse, install, and uninstall mods from the CVRMG mod repository
+- Detect and update outdated mods using version data read directly from each mod's DLL
+- Install / update / remove MelonLoader
+- Automatically moves mods marked **broken** to `Mods/Broken/` and **retired** to `Mods/Retired/` on update
+- Detects user-installed mods not listed in CVRMG and shows them separately — they are never auto-updated
+- Search and filter mods by name or description
+- Dark-themed GTK4 GUI
 
 ---
 

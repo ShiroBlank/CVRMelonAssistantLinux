@@ -405,7 +405,7 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
         // ── Mod listing state machine ─────────────────────────────────────────
         let is_separator = content_part.starts_with("---") && content_part.len() >= 20;
 
-        // "Loading Mods from ..." / "Loading Plugins from ..."
+        // "Loading Mods..." / "Loading Plugins..." sets pre_listing mode
         if !pre_listing && !listing_mods && !listing_plugins
             && (content_part.starts_with("Loading Mods") || content_part.starts_with("Loading Plugins"))
         {
@@ -415,13 +415,21 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
             continue;
         }
 
-        // "N Mods loaded." / "N Plugins loaded."
+        // "N Mods loaded." appears AFTER the named listing in this ML version.
+        // Use it only to record the expected count; listing is already active by then.
         if let Some(count) = parse_loaded_count(content_part) {
-            let is_plugin = content_part.contains("Plugin");
-            remaining_count  = count;
-            listing_mods     = !is_plugin;
-            listing_plugins  = is_plugin;
-            pre_listing      = false;
+            if !listing_mods && !listing_plugins {
+                // Older ML format: count line comes before entries, use it to enter listing
+                let is_plugin = content_part.contains("Plugin");
+                remaining_count  = count;
+                listing_mods     = !is_plugin;
+                listing_plugins  = is_plugin;
+                pre_listing      = false;
+            }
+            // Either way, stop listing after this line
+            listing_mods    = false;
+            listing_plugins = false;
+            pre_listing     = false;
             continue;
         }
 
@@ -435,7 +443,7 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
             continue;
         }
 
-        // Inside the listing
+        // Inside the listing (or pre_listing transitioning to listing on first separator)
         if listing_mods || listing_plugins {
             if is_separator {
                 // Commit current mod/plugin if complete
@@ -455,18 +463,11 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
                         if listing_plugins { report.loaded_plugins.push(entry); }
                         else               { report.loaded_mods.push(entry); }
                     } else {
-                        // Clear temps without committing
                         tmp_version.take(); tmp_author.take();
                         tmp_hash.take(); tmp_assembly.take();
                     }
-
-                    if remaining_count > 0 {
-                        remaining_count -= 1;
-                        if remaining_count == 0 {
-                            listing_mods    = false;
-                            listing_plugins = false;
-                        }
-                    }
+                } else {
+                    // Second separator of a double-separator pair — just skip
                 }
                 continue;
             }
@@ -503,7 +504,6 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
 
             // Name + version line: "ModName v1.2.3"
             if tmp_name.is_none() && !content_part.is_empty() && !content_part.starts_with('[') {
-                // Try to split on " v" to get name + version
                 if let Some(v_pos) = find_version_split(content_part) {
                     tmp_name    = Some(content_part[..v_pos].trim().to_string());
                     tmp_version = Some(content_part[v_pos+2..].trim().to_string());
@@ -630,7 +630,7 @@ fn parse_log(content: &str, log_path: PathBuf) -> ScanReport {
             &format!("Log exceeds 20,000 lines ({} total). Some entries may not have been scanned.", report.line_count)));
     }
 
-    // 3. Summary
+    // 3. Summary — count BEFORE adding the summary finding itself
     let issue_count = report.findings.iter()
         .filter(|f| f.severity == Severity::Error || f.severity == Severity::Warning)
         .count();

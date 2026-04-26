@@ -81,22 +81,24 @@ pub fn build_ui(app: &Application) {
         let _ = std::fs::write(&icon_path_48, crate::APP_ICON_PNG);
 
         // ── 2. Write a .desktop file ─────────────────────────────────────────
-        // Use the bare binary name for Exec= so it resolves via $PATH.
-        // Using current_exe() would embed a transient path (AppImage mount,
-        // cargo run path, etc.) which breaks after the first launch.
+        // The compositor matches the running app-id against Desktop Entry files.
+        // The file must be named <app-id>.desktop and have Icon=<app-id>.
         let desktop_dir = data_dir.join("applications");
         let _ = std::fs::create_dir_all(&desktop_dir);
         let desktop_path = desktop_dir.join(format!("{}.desktop", APP_ID));
+        let binary_path = std::env::current_exe()
+            .unwrap_or_else(|_| std::path::PathBuf::from("cvr-melon-assistant"));
         let desktop_content = format!(
             "[Desktop Entry]\n\
              Type=Application\n\
              Name={}\n\
-             Exec=cvr-melon-assistant\n\
+             Exec={}\n\
              Icon={}\n\
              Categories=Game;Utility;\n\
              StartupWMClass={}\n\
              StartupNotify=true\n",
             APP_NAME,
+            binary_path.display(),
             APP_ID,
             APP_ID,
         );
@@ -254,7 +256,7 @@ pub fn build_ui(app: &Application) {
                         Ok((mods, unverified, flags)) => {
                             let n = populate_mod_list(&lb, &cl, &st, mods, unverified, flags);
                             if n > 0 {
-                                ub.set_label(&format!("⬆  Update Outdated ({})", n));
+                                ub.set_label(&format!("Update Outdated ({})", n));
                                 ub.add_css_class("update-badge");
                             }
                         }
@@ -264,7 +266,7 @@ pub fn build_ui(app: &Application) {
                         }
                     }
                     load_btn.set_sensitive(true);
-                    load_btn.set_label("🔄  Refresh Mod List");
+                    load_btn.set_label("Refresh Mod List");
                 },
             );
         }
@@ -291,7 +293,7 @@ fn build_header(state: &SharedState) -> Box {
         let s = state.lock().unwrap();
         s.install_dir.as_ref()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "⚠ No install directory found".to_string())
+            .unwrap_or_else(|| "No install directory found".to_string())
     };
     let dir_label = Label::new(Some(&dir_str));
     dir_label.add_css_class("dir-label");
@@ -311,10 +313,10 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
     let toolbar = Box::new(Orientation::Horizontal, 6);
     toolbar.add_css_class("toolbar");
 
-    let load_btn     = Button::with_label("🔄  Refresh Mod List");
-    let install_btn  = Button::with_label("⬇  Install Selected");
-    let update_btn   = Button::with_label("⬆  Update Outdated");
-    let uninstall_btn = Button::with_label("🗑  Uninstall Selected");
+    let load_btn     = Button::with_label("Refresh Mod List");
+    let install_btn  = Button::with_label("Install Selected");
+    let update_btn   = Button::with_label("Update Outdated");
+    let uninstall_btn = Button::with_label("Uninstall Selected");
     let select_all   = Button::with_label("☑ All");
     let deselect_all = Button::with_label("☐ None");
     let search = SearchEntry::new();
@@ -339,20 +341,26 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
 
     // ── Column headers ────────────────────────────────────────────────────────
     let col_header = Box::new(Orientation::Horizontal, 0);
+    col_header.set_margin_start(8);
+    col_header.set_margin_end(8);
     col_header.add_css_class("col-header");
-    for (text, expand, width) in &[
-        ("", false, 28i32),
-        ("", false, 20i32),
-        ("Name / Description", true, -1),
-        ("Author", false, 140),
-        ("Latest", false, 90),
-        ("Installed", false, 90),
-        ("Status", false, 90),
-    ] {
+    // Each entry: (label_text, css_class, show_separator)
+    // CSS classes define fixed min-width to match mod row columns exactly
+    let header_cols: &[(&str, &str, bool)] = &[
+        ("",                   "col-check",   false),
+        ("",                   "col-flag",    false),
+        ("Name / Description", "col-name",    true),
+        ("Author",             "col-author",  true),
+        ("Latest",             "col-latest",  true),
+        ("Installed",          "col-installed", true),
+        ("Status",             "col-status",  false),
+    ];
+    for (text, css, sep) in header_cols {
         let lbl = Label::new(Some(text));
         lbl.add_css_class("col-header-label");
-        lbl.set_hexpand(*expand);
-        if !expand { lbl.set_width_chars(*width / 8); }
+        lbl.add_css_class(css);
+        if *sep { lbl.add_css_class("col-sep"); }
+        if *css == "col-name" { lbl.set_hexpand(true); lbl.set_halign(Align::Start); }
         col_header.append(&lbl);
     }
     vbox.append(&col_header);
@@ -408,17 +416,17 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                         Ok((mods, unverified, flags)) => {
                             let n = populate_mod_list(&lb, &cl, &st, mods, unverified, flags);
                             if n > 0 {
-                                ub.set_label(&format!("⬆  Update Outdated ({})", n));
+                                ub.set_label(&format!("Update Outdated ({})", n));
                                 ub.add_css_class("update-badge");
                             } else {
-                                ub.set_label("⬆  Update Outdated");
+                                ub.set_label("Update Outdated");
                                 ub.remove_css_class("update-badge");
                             }
                         }
                         Err(e) => show_error("Failed to load mods", &e.to_string()),
                     }
                     bc.set_sensitive(true);
-                    bc.set_label("🔄  Refresh Mod List");
+                    bc.set_label("Refresh Mod List");
                 },
             );
         });
@@ -448,7 +456,7 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                 None => {
                     show_error("No install directory", "Set your ChilloutVR path in Options.");
                     bc.set_sensitive(true);
-                    bc.set_label("⬇  Install Selected");
+                    bc.set_label("Install Selected");
                     return;
                 }
             };
@@ -478,19 +486,19 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                                 move |r| {
                                     if let Ok((mods, unverified, flags)) = r {
                                         let n = populate_mod_list(&lb, &cl, &st, mods, unverified, flags);
-                                        if n > 0 { ub.set_label(&format!("⬆  Update Outdated ({})", n)); }
-                                        else     { ub.set_label("⬆  Update Outdated"); }
+                                        if n > 0 { ub.set_label(&format!("Update Outdated ({})", n)); }
+                                        else     { ub.set_label("Update Outdated"); }
                                     }
                                     show_info("Install complete", &format!("{} installed, {} failed.", ok, fail));
                                     bc.set_sensitive(true);
-                                    bc.set_label("⬇  Install Selected");
+                                    bc.set_label("Install Selected");
                                 },
                             );
                         }
                         Err(e) => {
                             show_error("Install failed", &e.to_string());
                             bc.set_sensitive(true);
-                            bc.set_label("⬇  Install Selected");
+                            bc.set_label("Install Selected");
                         }
                     }
                 },
@@ -517,7 +525,7 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                 None => {
                     show_error("No install directory", "Set your ChilloutVR path in Options.");
                     bc.set_sensitive(true);
-                    bc.set_label("⬆  Update Outdated");
+                    bc.set_label("Update Outdated");
                     return;
                 }
             };
@@ -552,8 +560,8 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                                 move |r| {
                                     if let Ok((mods, unverified, flags)) = r {
                                         let n = populate_mod_list(&lb, &cl, &st, mods, unverified, flags);
-                                        if n > 0 { ub.set_label(&format!("⬆  Update Outdated ({})", n)); }
-                                        else     { ub.set_label("⬆  Update Outdated"); }
+                                        if n > 0 { ub.set_label(&format!("Update Outdated ({})", n)); }
+                                        else     { ub.set_label("Update Outdated"); }
                                     }
                                     let mut summary = String::new();
                                     if updated > 0 || failed > 0 {
@@ -564,7 +572,7 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                                     if !quarantined_broken.is_empty() {
                                         if !summary.is_empty() { summary.push('\n'); }
                                         summary.push_str(&format!(
-                                            "\n⚠ {} mod(s) moved to Mods/Broken/ (marked broken by CVRMG):\n",
+                                            "\n{} mod(s) moved to Mods/~Broken/ (marked broken by CVRMG):\n",
                                             quarantined_broken.len()
                                         ));
                                         for q in &quarantined_broken {
@@ -574,7 +582,7 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                                     if !quarantined_retired.is_empty() {
                                         if !summary.is_empty() { summary.push('\n'); }
                                         summary.push_str(&format!(
-                                            "\n📦 {} mod(s) moved to Mods/Retired/ (retired by CVRMG):\n",
+                                            "\n{} mod(s) moved to Mods/~Retired/ (retired by CVRMG):\n",
                                             quarantined_retired.len()
                                         ));
                                         for q in &quarantined_retired {
@@ -586,14 +594,14 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                                     }
                                     show_info("Update complete", &summary);
                                     bc.set_sensitive(true);
-                                    bc.set_label("⬆  Update Outdated");
+                                    bc.set_label("Update Outdated");
                                 },
                             );
                         }
                         Err(e) => {
                             show_error("Update failed", &e.to_string());
                             bc.set_sensitive(true);
-                            bc.set_label("⬆  Update Outdated");
+                            bc.set_label("Update Outdated");
                         }
                     }
                 },
@@ -656,12 +664,12 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                         move |result| {
                             if let Ok((mods, unverified, flags)) = result {
                                 let n = populate_mod_list(&lb, &cl, &st, mods, unverified, flags);
-                                if n > 0 { ub.set_label(&format!("⬆  Update Outdated ({})", n)); }
-                                else     { ub.set_label("⬆  Update Outdated"); }
+                                if n > 0 { ub.set_label(&format!("Update Outdated ({})", n)); }
+                                else     { ub.set_label("Update Outdated"); }
                             }
                             show_info("Uninstall complete", &format!("{} mod(s) removed.", ok));
                             bc.set_sensitive(true);
-                            bc.set_label("🗑  Uninstall Selected");
+                            bc.set_label("Uninstall Selected");
                         },
                     );
                 }
@@ -965,7 +973,7 @@ fn populate_mod_list(
     // Helper: is a mod's installed file in a quarantine dir?
     let is_quarantined = |m: &Mod| -> bool {
         m.installed_file_path.as_deref()
-            .map(|p| { let l = p.to_lowercase(); l.contains("/broken/") || l.contains("/retired/") })
+            .map(|p| { let l = p.to_lowercase(); l.contains("/~broken/") || l.contains("/~retired/") })
             .unwrap_or(false)
     };
 
@@ -1140,7 +1148,7 @@ fn toggle_category(listbox: &ListBox, cat_name: &str, state: &SharedState) {
                     let wnext = w.next_sibling();
                     if w.widget_name() == "chevron" {
                         if let Some(lbl) = w.downcast_ref::<Label>() {
-                            lbl.set_text(if now_collapsed { "▶" } else { "▼" });
+                            lbl.set_text(if now_collapsed { ">" } else { "v" });
                         }
                     }
                     hchild = wnext;
@@ -1169,7 +1177,7 @@ fn make_category_row(name: &str, collapsed: bool) -> ListBoxRow {
     hbox.set_margin_bottom(3);
 
     // Chevron indicator
-    let chevron = Label::new(Some(if collapsed { "▶" } else { "▼" }));
+    let chevron = Label::new(Some(if collapsed { ">" } else { "v" }));
     chevron.set_widget_name("chevron");
     chevron.add_css_class("category-chevron");
     hbox.append(&chevron);
@@ -1198,33 +1206,49 @@ fn make_mod_row(m: &Mod) -> ListBoxRow {
     let is_installed  = m.installed_file_path.is_some();
     let has_update    = is_installed && (install::mod_has_update(m) || install::mod_version_outdated(m));
 
+    // Installed version is higher than the API's latest — locally modified/patched
+    let is_ahead = is_installed && !has_update && {
+        if let (Some(inst), Some(api)) = (
+            m.installed_version.as_deref(),
+            m.versions.first().and_then(|v| v.mod_version.as_deref()),
+        ) {
+            crate::api::is_newer_version(api, inst)
+        } else {
+            false
+        }
+    };
+
     if has_update   { row.add_css_class("mod-has-update"); }
     if is_installed { row.add_css_class("mod-installed"); }
+    if is_ahead     { row.add_css_class("modified-row"); }
     if m.is_unverified { row.add_css_class("unverified-row"); }
-    if ver.map(|v| v.is_broken() || v.is_retired()).unwrap_or(false) {
+    if ver.map(|v| v.is_broken() || v.is_retired()).unwrap_or(false) && !is_ahead {
         row.add_css_class("broken-retired-row");
     }
 
-    let hbox = Box::new(Orientation::Horizontal, 6);
+    let hbox = Box::new(Orientation::Horizontal, 0);
     hbox.set_margin_start(8);
     hbox.set_margin_end(8);
     hbox.set_margin_top(5);
     hbox.set_margin_bottom(5);
 
-    // Checkbox (pre-checked if installed)
+    // Checkbox
     let check = CheckButton::new();
     check.set_active(is_installed);
     check.set_widget_name(&m._id.to_string());
+    check.add_css_class("col-check");
     hbox.append(&check);
 
     // Flag symbol
     let flag_lbl = Label::new(Some(api::flag_symbol(m.flag)));
-    flag_lbl.set_width_chars(2);
+    flag_lbl.add_css_class("col-flag");
     hbox.append(&flag_lbl);
 
     // Name + description
     let name_box = Box::new(Orientation::Vertical, 1);
     name_box.set_hexpand(true);
+    name_box.add_css_class("col-name");
+    name_box.add_css_class("col-sep");
     let name_str = ver.map(|v| v.name.as_str()).unwrap_or("?");
     let name_lbl = Label::new(Some(name_str));
     name_lbl.set_halign(Align::Start);
@@ -1235,30 +1259,63 @@ fn make_mod_row(m: &Mod) -> ListBoxRow {
         d.set_halign(Align::Start);
         d.set_ellipsize(pango::EllipsizeMode::End);
         d.set_max_width_chars(55);
+        d.set_lines(1);
         d.add_css_class("mod-desc");
         name_box.append(&d);
+
+        // Clicking the row toggles the description between truncated and fully expanded.
+        // We attach a GestureClick to the name_box so only clicking the text area
+        // triggers expand, not the checkbox or the meta columns.
+        let d_ref = d.clone();
+        let gesture = gtk4::GestureClick::new();
+        gesture.connect_released(move |g, _, _, _| {
+            if d_ref.ellipsize() == pango::EllipsizeMode::None {
+                // Collapse
+                d_ref.set_ellipsize(pango::EllipsizeMode::End);
+                d_ref.set_max_width_chars(55);
+                d_ref.set_lines(1);
+                d_ref.set_wrap(false);
+            } else {
+                // Expand
+                d_ref.set_ellipsize(pango::EllipsizeMode::None);
+                d_ref.set_max_width_chars(-1);
+                d_ref.set_lines(-1);
+                d_ref.set_wrap(true);
+                d_ref.set_wrap_mode(pango::WrapMode::WordChar);
+            }
+            // Stop propagation so the row selection / checkbox don't also fire
+            g.set_state(gtk4::EventSequenceState::Claimed);
+        });
+        name_box.add_controller(gesture);
     }
     hbox.append(&name_box);
 
     // Author
     let author = ver.and_then(|v| v.author.as_deref()).unwrap_or("—");
     let author_lbl = Label::new(Some(author));
-    author_lbl.set_width_chars(16);
+    author_lbl.set_xalign(0.0);
     author_lbl.set_ellipsize(pango::EllipsizeMode::End);
     author_lbl.add_css_class("mod-meta");
+    author_lbl.add_css_class("col-author");
+    author_lbl.add_css_class("col-sep");
     hbox.append(&author_lbl);
 
     // Latest version (from API)
-    let latest = ver.and_then(|v| v.mod_version.as_deref()).unwrap_or("?");
+    let latest = ver.and_then(|v| v.mod_version.as_deref()).unwrap_or("—");
     let latest_lbl = Label::new(Some(latest));
-    latest_lbl.set_width_chars(10);
+    latest_lbl.set_xalign(0.0);
     latest_lbl.add_css_class("mod-meta");
+    latest_lbl.add_css_class("col-latest");
+    latest_lbl.add_css_class("col-sep");
     hbox.append(&latest_lbl);
 
     // Installed version
     let inst_str = m.installed_version.as_deref().unwrap_or("—");
     let inst_lbl = Label::new(Some(inst_str));
-    inst_lbl.set_width_chars(10);
+    inst_lbl.set_xalign(0.0);
+    inst_lbl.add_css_class("mod-meta");
+    inst_lbl.add_css_class("col-installed");
+    inst_lbl.add_css_class("col-sep");
     if is_installed { inst_lbl.add_css_class("installed-ver"); }
     hbox.append(&inst_lbl);
 
@@ -1266,33 +1323,38 @@ fn make_mod_row(m: &Mod) -> ListBoxRow {
     let path_lower = m.installed_file_path.as_deref()
         .map(|p| p.to_lowercase())
         .unwrap_or_default();
-    let is_in_broken_dir  = path_lower.contains("/broken/");
-    let is_in_retired_dir = path_lower.contains("/retired/");
+    let is_in_broken_dir  = path_lower.contains("/~broken/");
+    let is_in_retired_dir = path_lower.contains("/~retired/");
 
-    let status_str = if is_in_broken_dir {
-        "⚠ BROKEN DIR"
+    // Status badge — MODIFIED takes highest priority: a locally-patched mod
+    // should never be overridden by API-reported broken/retired status.
+    let status_str = if is_ahead {
+        "MODIFIED"
+    } else if is_in_broken_dir {
+        "BROKEN DIR"
     } else if is_in_retired_dir {
-        "📦 RETIRED DIR"
+        "RETIRED DIR"
     } else if is_installed && ver.map(|v| v.is_broken()).unwrap_or(false) {
-        "→ QUARANTINE"
+        "QUARANTINE"
     } else if is_installed && ver.map(|v| v.is_retired()).unwrap_or(false) {
-        "→ RETIRE"
+        "RETIRE"
     } else if has_update {
-        "⬆ UPDATE"
+        "UPDATE"
     } else if is_installed {
-        "✓ OK"
+        "OK"
     } else if ver.map(|v| v.is_broken()).unwrap_or(false) {
-        "⚠ BROKEN"
+        "BROKEN"
     } else if ver.map(|v| v.is_retired()).unwrap_or(false) {
-        "● RETIRED"
+        "RETIRED"
     } else {
         ""
     };
     let status_lbl = Label::new(Some(status_str));
-    status_lbl.set_width_chars(12);
-    if status_str.contains("BROKEN DIR")  { status_lbl.add_css_class("badge-broken"); }
+    status_lbl.add_css_class("col-status");
+    if status_str.contains("MODIFIED")    { status_lbl.add_css_class("badge-modified"); }
+    else if status_str.contains("BROKEN DIR")  { status_lbl.add_css_class("badge-broken"); }
     else if status_str.contains("RETIRED DIR") { status_lbl.add_css_class("badge-retired"); }
-    else if status_str.contains("QUARANTINE") || status_str.contains("→ RETIRE") {
+    else if status_str.contains("QUARANTINE") || status_str.contains("RETIRE") {
                                             status_lbl.add_css_class("badge-quarantine"); }
     else if status_str.contains("BROKEN") { status_lbl.add_css_class("badge-broken"); }
     else if has_update                    { status_lbl.add_css_class("badge-update"); }
@@ -1381,9 +1443,9 @@ fn build_melon_loader_tab(state: &SharedState)
     let btn_box = Box::new(Orientation::Horizontal, 8);
     btn_box.set_margin_top(16);
 
-    let check_btn       = Button::with_label("🔍  Check Status");
-    let install_btn     = Button::with_label("⬇  Install / Update MelonLoader");
-    let remove_btn      = Button::with_label("🗑  Remove MelonLoader");
+    let check_btn       = Button::with_label("Check Status");
+    let install_btn     = Button::with_label("Install / Update MelonLoader");
+    let remove_btn      = Button::with_label("Remove MelonLoader");
 
     check_btn.add_css_class("action-button");
     install_btn.add_css_class("install-button");
@@ -1424,18 +1486,18 @@ fn build_melon_loader_tab(state: &SharedState)
             let hint = hint.clone();
             let dir = match state.lock().unwrap().install_dir.clone() {
                 Some(d) => d,
-                None => { sl.set_label("⚠ No install directory set"); return; }
+                None => { sl.set_label("No install directory set"); return; }
             };
             let is_installed  = install::is_melon_loader_installed(&dir);
             let installed_ver = install::get_installed_melon_loader_version(&dir);
             // Update local labels immediately (no network needed for these)
             if is_installed {
-                sl.set_label("✅  MelonLoader is installed");
+                sl.set_label("MelonLoader is installed");
                 sl.remove_css_class("status-err");
                 sl.add_css_class("status-ok");
                 ivl.set_label(installed_ver.as_deref().unwrap_or("(version unknown)"));
             } else {
-                sl.set_label("❌  MelonLoader is NOT installed");
+                sl.set_label("MelonLoader is NOT installed");
                 sl.remove_css_class("status-ok");
                 sl.add_css_class("status-err");
                 ivl.set_label("—");
@@ -1452,12 +1514,12 @@ fn build_melon_loader_tab(state: &SharedState)
                                 if let Some(inst_v) = &installed_ver {
                                     if api::is_newer_version(inst_v, &tag) {
                                         hint.set_label(&format!(
-                                            "⬆  Update available: {} → {}  (click Install / Update)",
+                                            "Update available: {} -> {}  (click Install / Update)",
                                             inst_v, tag
                                         ));
                                         hint.add_css_class("update-available");
                                     } else {
-                                        hint.set_label("✓  MelonLoader is up to date");
+                                        hint.set_label("MelonLoader is up to date");
                                         hint.remove_css_class("update-available");
                                     }
                                 }
@@ -1497,22 +1559,22 @@ fn build_melon_loader_tab(state: &SharedState)
                 move |result| {
                     match result {
                         Ok(dir) => {
-                            sl.set_label("✅  MelonLoader installed successfully!");
+                            sl.set_label("MelonLoader installed successfully!");
                             sl.add_css_class("status-ok");
                             let new_ver = install::get_installed_melon_loader_version(&dir)
                                 .unwrap_or_else(|| "(unknown)".into());
                             ivl.set_label(&new_ver);
-                            hint.set_label("✓  MelonLoader is up to date");
+                            hint.set_label("MelonLoader is up to date");
                             hint.remove_css_class("update-available");
                         }
                         Err(e) => {
-                            sl.set_label("❌  Install failed");
+                            sl.set_label("Install failed");
                             sl.add_css_class("status-err");
                             show_error("Install failed", &e.to_string());
                         }
                     }
                     bc.set_sensitive(true);
-                    bc.set_label("⬇  Install / Update MelonLoader");
+                    bc.set_label("Install / Update MelonLoader");
                     prog.set_visible(false);
                 },
             );
@@ -1558,7 +1620,7 @@ fn build_melon_loader_tab(state: &SharedState)
 
     let tip_inner = Box::new(Orientation::Horizontal, 8);
     let tip_label = Label::new(Some(&format!(
-        "💡 Tip: Add  {}  to ChilloutVR's Steam launch options to enable MelonLoader.\n\
+        "Tip: Add  {}  to ChilloutVR's Steam launch options to enable MelonLoader.\n\
          Click to copy the launch argument to clipboard.", LAUNCH_ARG
     )));
     tip_label.set_halign(Align::Start);
@@ -1566,7 +1628,7 @@ fn build_melon_loader_tab(state: &SharedState)
     tip_label.set_xalign(0.0);
     tip_inner.append(&tip_label);
 
-    let copy_icon = Label::new(Some("📋"));
+    let copy_icon = Label::new(Some("[Copy]"));
     copy_icon.set_valign(Align::Start);
     tip_inner.append(&copy_icon);
     tip_btn.set_child(Some(&tip_inner));
@@ -1580,7 +1642,7 @@ fn build_melon_loader_tab(state: &SharedState)
             clipboard.set_text(LAUNCH_ARG);
         }
         // Show toast label briefly
-        toast_label_ref.set_text("✓ Launch argument copied to clipboard!");
+        toast_label_ref.set_text("Launch argument copied to clipboard!");
         toast_label_ref.set_visible(true);
         let tl = toast_label_ref.clone();
         glib::timeout_add_seconds_local_once(3, move || {
@@ -1691,11 +1753,11 @@ fn build_options_tab(
 
     let btn_row = Box::new(Orientation::Horizontal, 8);
     for (lbl, sub) in &[
-        ("📁 Game Folder", ""),
-        ("📁 Mods", "Mods"),
-        ("📁 Plugins", "Plugins"),
-        ("📁 MelonLoader", "MelonLoader"),
-        ("📁 UserData", "UserData"),
+        ("Game Folder", ""),
+        ("Mods", "Mods"),
+        ("Plugins", "Plugins"),
+        ("MelonLoader", "MelonLoader"),
+        ("UserData", "UserData"),
     ] {
         let b = Button::with_label(lbl);
         b.add_css_class("folder-button");
@@ -1748,7 +1810,7 @@ fn build_options_tab(
     vbox.append(&group_check);
 
     let quarantine_check = CheckButton::with_label(
-        "Show mods that have been moved to Broken/ or Retired/ directories in the mod list"
+        "Show mods that have been moved to ~Broken/ or ~Retired/ directories in the mod list"
     );
     quarantine_check.set_active(Config::load().show_quarantined_mods);
     quarantine_check.add_css_class("options-check");
@@ -1814,7 +1876,7 @@ fn build_about_tab() -> Box {
 
     // Vibe-coded disclaimer
     let disclaimer = Label::new(Some(
-        "⚠  This project is vibe coded using Claude (claude.ai).\n\
+        "This project is vibe coded using Claude (claude.ai).\n\
          It may contain bugs or behave unexpectedly. Use at your own risk."
     ));
     disclaimer.set_justify(Justification::Center);
@@ -1935,7 +1997,7 @@ fn build_debug_tab(state: &SharedState) -> (Box, Button) {
     let toolbar = Box::new(Orientation::Horizontal, 8);
     toolbar.add_css_class("toolbar");
 
-    let scan_btn = Button::with_label("🔍  Scan Log");
+    let scan_btn = Button::with_label("Scan Log");
     scan_btn.add_css_class("action-button");
     toolbar.append(&scan_btn);
 
@@ -1946,7 +2008,7 @@ fn build_debug_tab(state: &SharedState) -> (Box, Button) {
     log_path_label.add_css_class("dir-label");
     toolbar.append(&log_path_label);
 
-    let open_log_btn = Button::with_label("📂  Open Log");
+    let open_log_btn = Button::with_label("Open Log");
     open_log_btn.add_css_class("small-button");
     toolbar.append(&open_log_btn);
 
@@ -1964,7 +2026,7 @@ fn build_debug_tab(state: &SharedState) -> (Box, Button) {
     findings_box.set_widget_name("findings-box");
 
     let placeholder = Label::new(Some(
-        "Click '🔍 Scan Log' to analyse your MelonLoader log file.\n\
+        "Click 'Scan Log' to analyse your MelonLoader log file.\n\
          The log is read from:  <ChilloutVR>/MelonLoader/Latest.log"
     ));
     placeholder.set_halign(Align::Center);
@@ -2026,7 +2088,7 @@ fn build_debug_tab(state: &SharedState) -> (Box, Button) {
                     panel.set_margin_top(40);
 
                     if is_missing {
-                        let icon = Label::new(Some("📄"));
+                        let icon = Label::new(Some(""));
                         icon.set_halign(Align::Center);
                         // Large emoji via CSS font-size
                         icon.add_css_class("debug-no-log-icon");
@@ -2040,7 +2102,7 @@ fn build_debug_tab(state: &SharedState) -> (Box, Button) {
                         let body = Label::new(Some(
                             "MelonLoader/Latest.log does not exist yet.\n\n\
                              Launch ChilloutVR with MelonLoader installed at least once,\n\
-                             then come back and click 🔍 Scan Log."
+                             then come back and click Scan Log."
                         ));
                         body.set_halign(Align::Center);
                         body.set_justify(gtk4::Justification::Center);
@@ -2060,7 +2122,7 @@ fn build_debug_tab(state: &SharedState) -> (Box, Button) {
 
                         st.set_label("No log file found — launch the game first.");
                     } else {
-                        let title = Label::new(Some("❌  Failed to read log"));
+                        let title = Label::new(Some("Failed to read log"));
                         title.set_halign(Align::Center);
                         title.add_css_class("debug-no-log-title");
                         panel.append(&title);
@@ -2166,10 +2228,10 @@ fn build_debug_tab(state: &SharedState) -> (Box, Button) {
 
                         // Category header
                         let icon = match finding.severity {
-                            crate::log_scanner::Severity::Ok      => "✅",
-                            crate::log_scanner::Severity::Info    => "ℹ",
-                            crate::log_scanner::Severity::Warning => "⚠",
-                            crate::log_scanner::Severity::Error   => "❌",
+                            crate::log_scanner::Severity::Ok      => "[OK]",
+                            crate::log_scanner::Severity::Info    => "[i]",
+                            crate::log_scanner::Severity::Warning => "[!]",
+                            crate::log_scanner::Severity::Error   => "[x]",
                         };
                         let cat_lbl = Label::new(Some(&format!("{} {}", icon, finding.category)));
                         cat_lbl.set_halign(Align::Start);
@@ -2189,6 +2251,7 @@ fn build_debug_tab(state: &SharedState) -> (Box, Button) {
                     }
 
                     let issues = report.findings.iter()
+                        .filter(|f| f.category != "Summary")
                         .filter(|f| f.severity == crate::log_scanner::Severity::Error
                                || f.severity == crate::log_scanner::Severity::Warning)
                         .count();
@@ -2199,13 +2262,13 @@ fn build_debug_tab(state: &SharedState) -> (Box, Button) {
                         report.loaded_mods.len(),
                         report.loaded_plugins.len(),
                         issues,
-                        if report.truncated { "  •  ⚠ Log truncated" } else { "" }
+                        if report.truncated { "  •  Log truncated" } else { "" }
                     ));
                 }
             }
 
             b.set_sensitive(true);
-            b.set_label("🔍  Scan Log");
+            b.set_label("Scan Log");
         });
     }
 
@@ -2256,6 +2319,15 @@ notebook > header > tabs > tab:checked { color: #e94560; border-bottom: 2px soli
 
 .col-header { background-color: #0f1726; padding: 4px 8px; border-bottom: 1px solid #2a2a4a; }
 .col-header-label { font-size: 11px; color: #666; font-weight: bold; }
+/* Column widths — shared between header labels and mod row widgets */
+.col-check    { min-width: 24px; max-width: 24px; }
+.col-flag     { min-width: 20px; max-width: 20px; }
+.col-name     { /* expands to fill remaining space */ }
+.col-author   { min-width: 150px; max-width: 150px; }
+.col-latest   { min-width: 90px;  max-width: 90px; }
+.col-installed { min-width: 90px; max-width: 90px; }
+.col-status   { min-width: 110px; max-width: 110px; }
+.col-sep      { border-left: 1px solid #2a2a4a; padding-left: 8px; }
 
 .bottom-bar { background-color: #0f1726; padding: 4px 10px; border-top: 1px solid #2a2a4a; font-size: 11px; color: #888; }
 
@@ -2279,12 +2351,12 @@ notebook > header > tabs > tab:checked { color: #e94560; border-bottom: 2px soli
 
 /* Mod list */
 .mods-listbox { background-color: #16213e; }
-.mods-listbox > row { border-bottom: 1px solid #1f2b50; }
+.mods-listbox > row { border-bottom: 1px solid #1f2b50; border-left: 3px solid transparent; }
 .mods-listbox > row:hover { background-color: #1f2b50; }
 .mods-listbox > row.mod-installed  { border-left: 3px solid #4caf50; }
 .mods-listbox > row.mod-has-update { background-color: #1a2a1a; border-left: 3px solid #f1c40f; }
 .mod-name   { font-weight: bold; color: #e0e0e0; font-size: 13px; }
-.mod-desc   { font-size: 11px; color: #777; }
+.mod-desc   { font-size: 11px; color: #777; cursor: pointer; }
 .mod-meta   { font-size: 11px; color: #999; }
 .installed-ver { font-size: 11px; color: #4caf50; font-weight: bold; }
 .category-row { background-color: #0f1726; }
@@ -2296,6 +2368,7 @@ notebook > header > tabs > tab:checked { color: #e94560; border-bottom: 2px soli
 .badge-update      { color: #f1c40f; font-weight: bold; font-size: 11px; }
 .badge-quarantine  { color: #e67e22; font-weight: bold; font-size: 11px; }
 .badge-ok          { color: #4caf50; font-size: 11px; }
+.badge-modified    { color: #7ec8e3; font-size: 11px; }
 .badge-broken      { color: #e74c3c; font-size: 11px; }
 .badge-retired     { color: #e67e22; font-size: 11px; }
 
@@ -2328,6 +2401,7 @@ notebook > header > tabs > tab:checked { color: #e94560; border-bottom: 2px soli
                                   text-transform: uppercase; letter-spacing: 1px; margin: 2px 8px; }
 .mods-listbox > row.unverified-row    { background-color: #1a1000; border-left: 3px solid #e67e22; }
 .mods-listbox > row.broken-retired-row { background-color: #1a0000; border-left: 3px solid #e74c3c; }
+.mods-listbox > row.modified-row      { background-color: #001a2a; border-left: 3px solid #7ec8e3; }
 
 /* Debug tab */
 .debug-header-box       { background-color: #111827; border-radius: 6px; padding: 10px 14px; margin-bottom: 4px; }
