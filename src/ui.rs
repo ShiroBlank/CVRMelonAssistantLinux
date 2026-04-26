@@ -462,9 +462,21 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
             };
             let mods_snapshot = st.lock().unwrap().mods.clone();
             let all_mods = mods_snapshot.clone();
+            let mut skipped_up_to_date = 0usize;
             let targets: Vec<Mod> = mods_snapshot.into_iter()
                 .filter(|m| checked.contains(&m._id))
                 .filter(|m| !m.is_unverified)  // never auto-install unverified mods
+                .filter(|m| {
+                    // Skip mods that are already installed at the latest (or newer)
+                    // version. mod_has_update returns false for not-installed mods,
+                    // so allow those through too.
+                    if m.installed_file_path.is_none() || install::mod_has_update(m) {
+                        true
+                    } else {
+                        skipped_up_to_date += 1;
+                        false
+                    }
+                })
                 .collect();
             crate::spawn_async(
                 async move {
@@ -476,11 +488,11 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                             Err(_) => fail += 1,
                         }
                     }
-                    Ok((ok, fail, dir))
+                    Ok((ok, fail, skipped_up_to_date, dir))
                 },
                 move |result| {
                     match result {
-                        Ok((ok, fail, _dir)) => {
+                        Ok((ok, fail, skipped, _dir)) => {
                             crate::spawn_async(
                                 fetch_mod_data(st.clone()),
                                 move |r| {
@@ -489,7 +501,12 @@ fn build_mods_tab(state: &SharedState) -> (Box, ListBox, Button, Button, Label) 
                                         if n > 0 { ub.set_label(&format!("Update Outdated ({})", n)); }
                                         else     { ub.set_label("Update Outdated"); }
                                     }
-                                    show_info("Install complete", &format!("{} installed, {} failed.", ok, fail));
+                                    let msg = if skipped > 0 {
+                                        format!("{} installed, {} already up to date, {} failed.", ok, skipped, fail)
+                                    } else {
+                                        format!("{} installed, {} failed.", ok, fail)
+                                    };
+                                    show_info("Install complete", &msg);
                                     bc.set_sensitive(true);
                                     bc.set_label("Install Selected");
                                 },
