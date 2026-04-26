@@ -108,7 +108,7 @@ WINEDLLOVERRIDES="version=n,b" %command%
 
 - Original Windows app by [Nirv-git & knah](https://github.com/Nirv-git/CVRMelonAssistant)
 - Linux port by [Kneesox](https://kneesox.moe)
-- Vibe coded with [Claude](https://claude.ai) by Anthropic
+- AI Assisted via [Claude](https://claude.ai) by Anthropic
 - Log scanner ported from [Lumbot](https://github.com/Slaynash/Lumbot) by Slaynash
 - Mod repository: [CVRMG](https://api.cvrmg.com/v1/mods)
 - [MelonLoader](https://melonwiki.xyz) by LavaGang
