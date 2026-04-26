@@ -81,24 +81,22 @@ pub fn build_ui(app: &Application) {
         let _ = std::fs::write(&icon_path_48, crate::APP_ICON_PNG);
 
         // ── 2. Write a .desktop file ─────────────────────────────────────────
-        // The compositor matches the running app-id against Desktop Entry files.
-        // The file must be named <app-id>.desktop and have Icon=<app-id>.
+        // Use the bare binary name for Exec= so it resolves via $PATH.
+        // Using current_exe() would embed a transient path (AppImage mount,
+        // cargo run path, etc.) which breaks after the first launch.
         let desktop_dir = data_dir.join("applications");
         let _ = std::fs::create_dir_all(&desktop_dir);
         let desktop_path = desktop_dir.join(format!("{}.desktop", APP_ID));
-        let binary_path = std::env::current_exe()
-            .unwrap_or_else(|_| std::path::PathBuf::from("cvr-melon-assistant"));
         let desktop_content = format!(
             "[Desktop Entry]\n\
              Type=Application\n\
              Name={}\n\
-             Exec={}\n\
+             Exec=cvr-melon-assistant\n\
              Icon={}\n\
              Categories=Game;Utility;\n\
              StartupWMClass={}\n\
              StartupNotify=true\n",
             APP_NAME,
-            binary_path.display(),
             APP_ID,
             APP_ID,
         );
