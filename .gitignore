@@ -1,1 +1,5 @@
 /target
+/AppDir
+/appimagetool-x86_64.AppImage
+/*.AppImage
+/packaging
