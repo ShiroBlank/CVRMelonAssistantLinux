@@ -15,9 +15,9 @@ Ported and maintained by **[Kneesox](https://kneesox.moe)**.
 
 ## Features
 
-- 🔍 Auto-detects ChilloutVR via Steam (`~/.local/share/Steam`, Steam Deck, Flatpak)
+- 🔍 Auto-detects ChilloutVR via Steam
 - 📦 Browse, install, and uninstall mods from the CVRMG mod repository
-- ⬆️ Detect and update outdated mods using version data read directly from each mod's DLL
+- ⬆️ Detect and update outdated mods 
 - 🔗 Automatically resolves and installs mod dependencies on install
 - ⬇️ Install / update / remove MelonLoader
 - 🚫 Automatically quarantines mods marked **broken** or **retired** on update
