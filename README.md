@@ -9,65 +9,52 @@ A Linux port of [CVRMelonAssistant](https://github.com/Nirv-git/CVRMelonAssistan
 Ported and maintained by **[Kneesox](https://kneesox.moe)**.
 
 ![CVR MelonLoader Assistant screenshot](screenshot.png)
-
 ![CVR MelonLoader Assistant screenshot 2](screenshot2.png)
 
+---
 
 ## Features
 
-- 🔍 Auto-detects ChilloutVR via Steam on Linux (`~/.local/share/Steam`, Steam Deck, Flatpak)
+- 🔍 Auto-detects ChilloutVR via Steam (`~/.local/share/Steam`, Steam Deck, Flatpak)
 - 📦 Browse, install, and uninstall mods from the CVRMG mod repository
 - ⬆️ Detect and update outdated mods using version data read directly from each mod's DLL
+- 🔗 Automatically resolves and installs mod dependencies on install
 - ⬇️ Install / update / remove MelonLoader
-- 🚫 Automatically moves mods marked **broken** to `Mods/Broken/` and **retired** to `Mods/Retired/` on update
-- 👤 Detects user-installed mods not listed in CVRMG and shows them separately — they are never auto-updated
-- 🔎 Search and filter mods by name or description
+- 🚫 Automatically quarantines mods marked **broken** or **retired** on update
+- 👤 Detects user-installed mods not listed in CVRMG — shown separately, never auto-updated
+- 🔎 Collapsible categories, search, and mod filtering
+- 🐛 Log scanner — parses MelonLoader logs to diagnose issues and missing dependencies
 - 🎨 Dark-themed GTK4 GUI
-- 🍉 Parse and analyze melon loader logs to find broken mods and issues.
+
+---
 
 ## Installation
 
-### Arch Linux / Arch-based distros (recommended)
+### Arch Linux, Manjaro, EndeavourOS, Steam Deck, and other Arch-based distros
 
-Install directly from the AUR using your preferred AUR helper:
+Install from the AUR — the package always tracks the latest commit, so no manual version updates are needed:
 
 ```bash
-# Using paru
 paru -S cvr-melon-assistant-git
-
-# Using yay
+# or
 yay -S cvr-melon-assistant-git
-
-# Manually with makepkg
-git clone https://aur.archlinux.org/cvr-melon-assistant-git.git
-cd cvr-melon-assistant-git
-makepkg -si
 ```
 
-The package always tracks the latest commit from the main branch — no manual updates needed beyond `paru -Syu`.
+### AppImage — any distro
 
-### AppImage (any distro)
-
-Pre-built AppImages are available on the [releases page](https://github.com/ShiroBlank/CVRMelonAssistantLinux/releases). Download the latest `CVRMelonAssistant-x86_64.AppImage`, make it executable, and run it:
+Pre-built AppImages are available on the [Releases page](https://github.com/ShiroBlank/CVRMelonAssistantLinux/releases):
 
 ```bash
 chmod +x CVRMelonAssistant-x86_64.AppImage
 ./CVRMelonAssistant-x86_64.AppImage
 ```
 
-### Other distros
+### Build from source
 
-Build from source — see the [Building](#building) section below.
+**Requirements:** Rust 1.85+, GTK4 dev libraries, OpenSSL dev libraries.
 
-## Building
-
-### Requirements
-
-- **Rust 1.85+** (`rustup` recommended)
-- **GTK4 dev libraries**
-- **OpenSSL dev libraries**
-
-### Ubuntu / Debian / Steam Deck
+<details>
+<summary>Ubuntu / Debian</summary>
 
 ```bash
 sudo apt install libgtk-4-dev pkg-config libssl-dev build-essential
@@ -75,8 +62,10 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
 cargo build --release
 ```
+</details>
 
-### Fedora / RHEL
+<details>
+<summary>Fedora / RHEL</summary>
 
 ```bash
 sudo dnf install gtk4-devel pkgconf openssl-devel
@@ -84,8 +73,10 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
 cargo build --release
 ```
+</details>
 
-### Arch Linux
+<details>
+<summary>Arch Linux (manual build)</summary>
 
 ```bash
 sudo pacman -S gtk4 pkgconf openssl base-devel
@@ -93,8 +84,11 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
 cargo build --release
 ```
+</details>
 
 The binary will be at `target/release/cvr-melon-assistant`.
+
+---
 
 ## MelonLoader + Proton
 
@@ -104,11 +98,15 @@ ChilloutVR is a **Windows-only** game running via **Steam Play (Proton)** on Lin
 WINEDLLOVERRIDES="version=n,b" %command%
 ```
 
+---
+
 ## Credits
 
-- Original Windows app by [Nirv-git & knah](https://github.com/Nirv-git/CVRMelonAssistant)
-- Linux port by [Kneesox](https://kneesox.moe)
-- AI Assisted via [Claude](https://claude.ai) by Anthropic
-- Log scanner ported from [Lumbot](https://github.com/Slaynash/Lumbot) by Slaynash
-- Mod repository: [CVRMG](https://api.cvrmg.com/v1/mods)
-- [MelonLoader](https://melonwiki.xyz) by LavaGang
+| | |
+|---|---|
+| Original Windows app | [Nirv-git & knah](https://github.com/Nirv-git/CVRMelonAssistant) |
+| Linux port | [Kneesox](https://kneesox.moe) |
+| AI assisted via | [Claude](https://claude.ai) by Anthropic |
+| Log scanner ported from | [Lumbot](https://github.com/Slaynash/Lumbot) by Slaynash |
+| Mod repository | [CVRMG](https://api.cvrmg.com/v1/mods) |
+| Mod loader | [MelonLoader](https://melonwiki.xyz) by LavaGang |
