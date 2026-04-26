@@ -25,6 +25,40 @@ Ported and maintained by **[Kneesox](https://kneesox.moe)**.
 - 🎨 Dark-themed GTK4 GUI
 - 🍉 Parse and analyze melon loader logs to find broken mods and issues.
 
+## Installation
+
+### Arch Linux / Arch-based distros (recommended)
+
+Install directly from the AUR using your preferred AUR helper:
+
+```bash
+# Using paru
+paru -S cvr-melon-assistant-git
+
+# Using yay
+yay -S cvr-melon-assistant-git
+
+# Manually with makepkg
+git clone https://aur.archlinux.org/cvr-melon-assistant-git.git
+cd cvr-melon-assistant-git
+makepkg -si
+```
+
+The package always tracks the latest commit from the main branch — no manual updates needed beyond `paru -Syu`.
+
+### AppImage (any distro)
+
+Pre-built AppImages are available on the [releases page](https://github.com/ShiroBlank/CVRMelonAssistantLinux/releases). Download the latest `CVRMelonAssistant-x86_64.AppImage`, make it executable, and run it:
+
+```bash
+chmod +x CVRMelonAssistant-x86_64.AppImage
+./CVRMelonAssistant-x86_64.AppImage
+```
+
+### Other distros
+
+Build from source — see the [Building](#building) section below.
+
 ## Building
 
 ### Requirements
