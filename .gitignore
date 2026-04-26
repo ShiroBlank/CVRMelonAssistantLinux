@@ -4,3 +4,4 @@
 /*.AppImage
 /packaging
 /build-appimage.sh
+/aur-pkg
