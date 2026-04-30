@@ -15,11 +15,12 @@ Ported and maintained by **[Kneesox](https://kneesox.moe)**.
 
 ## Features
 
-- Auto-detects ChilloutVR via Steam on Linux (`~/.local/share/Steam`, Steam Deck, Flatpak)
+- Auto-detects ChilloutVR via Steam on Linux (`~/.local/share/Steam`, Steam Deck, Flatpak and many more)
+- Parse melonloader logs and breakdown issues, ported from lumbot in the cvrmg discord
 - Browse, install, and uninstall mods from the CVRMG mod repository
 - Detect and update outdated mods using version data read directly from each mod's DLL
 - Install / update / remove MelonLoader
-- Automatically moves mods marked **broken** to `Mods/Broken/` and **retired** to `Mods/Retired/` on update
+- Automatically moves mods marked **broken** to `Mods/~Broken/` and **retired** to `Mods/~Retired/` on update
 - Detects user-installed mods not listed in CVRMG and shows them separately — they are never auto-updated
 - Search and filter mods by name or description
 - Dark-themed GTK4 GUI
